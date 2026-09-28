@@ -132,12 +132,14 @@ export async function launchCampaign(params: {
 
   for (let i = 0; i < eligible.length; i++) {
     const prospect = eligible[i];
+    const scheduledFor = slots[i];
+    if (!prospect || !scheduledFor) continue;
     await draftEmailForStep({
       userId: params.userId,
       campaign,
       prospect,
       step: firstStep,
-      scheduledFor: slots[i],
+      scheduledFor,
     });
     await prisma.campaignProspect.upsert({
       where: { campaignId_prospectId: { campaignId: campaign.id, prospectId: prospect.id } },

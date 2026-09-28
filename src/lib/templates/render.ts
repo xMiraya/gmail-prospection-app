@@ -13,7 +13,7 @@ export type TemplateVariable = (typeof AVAILABLE_VARIABLES)[number];
 
 export function detectVariables(text: string): string[] {
   const matches = text.matchAll(/\{\{\s*(\w+)\s*\}\}/g);
-  return Array.from(new Set(Array.from(matches, (m) => m[1])));
+  return Array.from(new Set(Array.from(matches, (m) => m[1]).filter((v): v is string => !!v)));
 }
 
 function variableValue(

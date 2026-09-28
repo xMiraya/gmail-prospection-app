@@ -58,6 +58,9 @@ export default function LoginPage() {
         >
           {loading ? "Connexion..." : "Se connecter"}
         </button>
+        <p className="text-xs text-center text-muted-foreground">
+          Pas encore de compte ? <a href="/signup" className="underline">Créez-en un</a>
+        </p>
       </form>
     </div>
   );

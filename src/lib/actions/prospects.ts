@@ -113,7 +113,8 @@ export async function importCsv(
   let skipped = 0;
 
   for (const row of parsed.data) {
-    const email = (row[mapping.email] ?? "").trim().toLowerCase();
+    const emailColumn = mapping.email ?? "";
+    const email = (row[emailColumn] ?? "").trim().toLowerCase();
     if (!EMAIL_RE.test(email)) {
       skipped++;
       continue;
@@ -127,7 +128,7 @@ export async function importCsv(
       data: {
         userId,
         email,
-        firstName: row[mapping.firstName] ?? "",
+        firstName: (mapping.firstName ? row[mapping.firstName] : undefined) ?? "",
         lastName: mapping.lastName ? row[mapping.lastName] ?? null : null,
         phone: mapping.phone ? row[mapping.phone] ?? null : null,
         website: mapping.website ? row[mapping.website] ?? null : null,
