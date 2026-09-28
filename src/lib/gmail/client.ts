@@ -88,6 +88,18 @@ function base64UrlEncode(str: string) {
  * (In-Reply-To / References) quand `threadId`/`inReplyToMessageId` sont fournis,
  * pour que les relances apparaissent dans le même fil de discussion.
  */
+export function isSandboxMode() {
+  return process.env.EMAIL_SANDBOX_MODE === "true";
+}
+
+/**
+ * En mode sandbox (EMAIL_SANDBOX_MODE=true), REDIRIGE tout envoi réel vers
+ * SANDBOX_EMAIL, quel que soit le prospect visé. Le destinataire prévu original
+ * reste affiché tel quel dans l'interface (il est stocké tel quel en base dans
+ * ScheduledEmail.toEmail) — seul l'appel Gmail réel change de cible, pour
+ * pouvoir tester toute la chaîne (séquences, relances, cron) sans jamais
+ * risquer d'atteindre un vrai prospect.
+ */
 export async function sendGmailMessage(params: {
   userId: string;
   to: string;
@@ -101,25 +113,42 @@ export async function sendGmailMessage(params: {
     where: { userId: params.userId },
   });
 
+  const sandbox = isSandboxMode();
+  if (sandbox && !process.env.SANDBOX_EMAIL) {
+    throw new Error("EMAIL_SANDBOX_MODE est activé mais SANDBOX_EMAIL n'est pas défini.");
+  }
+
+  const actualTo = sandbox ? process.env.SANDBOX_EMAIL! : params.to;
+  const actualSubject = sandbox ? `[SANDBOX → destiné à ${params.to}] ${params.subject}` : params.subject;
+  // En sandbox, un threadId réel de Gmail ne correspond pas forcément à un thread
+  // existant avec l'adresse sandbox : on ne réutilise pas le threading dans ce cas
+  // pour éviter une erreur Gmail "invalid thread".
+  const threadId = sandbox ? undefined : params.threadId ?? undefined;
+  const inReplyToMessageId = sandbox ? undefined : params.inReplyToMessageId;
+
   const headers = [
     `From: ${account.email}`,
-    `To: ${params.to}`,
-    `Subject: =?UTF-8?B?${Buffer.from(params.subject).toString("base64")}?=`,
+    `To: ${actualTo}`,
+    `Subject: =?UTF-8?B?${Buffer.from(actualSubject).toString("base64")}?=`,
     "MIME-Version: 1.0",
     "Content-Type: text/html; charset=UTF-8",
   ];
-  if (params.inReplyToMessageId) {
-    headers.push(`In-Reply-To: <${params.inReplyToMessageId}>`);
-    headers.push(`References: <${params.inReplyToMessageId}>`);
+  if (inReplyToMessageId) {
+    headers.push(`In-Reply-To: <${inReplyToMessageId}>`);
+    headers.push(`References: <${inReplyToMessageId}>`);
   }
 
-  const raw = base64UrlEncode(`${headers.join("\r\n")}\r\n\r\n${params.html}`);
+  const sandboxBanner = sandbox
+    ? `<div style="background:#fef3c7;border:1px solid #f59e0b;padding:8px 12px;margin-bottom:12px;font:12px monospace">MODE SANDBOX — destinataire réel prévu : ${params.to}</div>`
+    : "";
+
+  const raw = base64UrlEncode(`${headers.join("\r\n")}\r\n\r\n${sandboxBanner}${params.html}`);
 
   const res = await gmail.users.messages.send({
     userId: "me",
     requestBody: {
       raw,
-      threadId: params.threadId ?? undefined,
+      threadId,
     },
   });
 

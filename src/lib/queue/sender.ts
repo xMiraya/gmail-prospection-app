@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db/prisma";
 import { sendGmailMessage } from "@/lib/gmail/client";
 import { logActivity } from "@/lib/activity";
 import { createNotification } from "@/lib/notifications";
+import { assertSendable } from "./guards";
 
 const LOCK_STALE_MS = 5 * 60 * 1000;
 
@@ -43,14 +44,17 @@ export async function processDueEmails(limit = 50) {
       continue;
     }
 
-    // Vérification finale anti-spam : le prospect n'a pas répondu ni été blacklisté
-    // entre la préparation et l'envoi effectif.
+    // Porte de sécurité unique (voir lib/queue/guards.ts) : re-vérifie le statut,
+    // les variables non résolues, et l'état du prospect juste avant l'envoi réel.
+    // C'est ELLE, et non le simple statut lu plus haut, qui autorise ou non l'appel Gmail.
     const prospect = await prisma.prospect.findUnique({ where: { id: email.prospectId } });
-    if (!prospect || prospect.status === "A_REPONDU" || prospect.status === "NE_PLUS_CONTACTER") {
+    const verdict = prospect ? await assertSendable(email, prospect) : { ok: false as const, reason: "Prospect introuvable" };
+    if (!verdict.ok) {
       await prisma.scheduledEmail.update({
         where: { id: email.id },
-        data: { status: "REFUSE", failReason: "Annulé : le prospect a répondu ou est sur liste noire" },
+        data: { status: "REFUSE", failReason: verdict.reason },
       });
+      await logActivity(email.userId, "EMAIL_CANCELLED", email.prospectId, { reason: verdict.reason }, email.campaignId);
       continue;
     }
 

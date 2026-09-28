@@ -9,6 +9,8 @@ import {
   rejectEmail,
   postponeEmail,
   bulkValidateAndSend,
+  getBulkValidationSummaryForCurrentUser,
+  type BulkValidationSummary,
 } from "@/lib/actions/validation";
 
 export type DraftEmail = {
@@ -24,16 +26,27 @@ export type DraftEmail = {
   sequenceStep: { order: number } | null;
 };
 
-export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
+export function ValidationQueue({
+  drafts,
+  sandbox,
+}: {
+  drafts: DraftEmail[];
+  sandbox: { email: string } | null;
+}) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ toEmail: "", subject: "", bodyHtml: "" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
+  const [bulkSummary, setBulkSummary] = useState<BulkValidationSummary | null>(null);
   const [busy, setBusy] = useState(false);
+  const [gmailPreview, setGmailPreview] = useState(false);
 
   const current = drafts[index];
+  const effectiveSubject = editing ? form.subject : current?.subject ?? "";
+  const effectiveBody = editing ? form.bodyHtml : current?.bodyHtml ?? "";
+  const blockedByVariables = /\{\{\s*\w+\s*\}\}/.test(effectiveSubject) || /\{\{\s*\w+\s*\}\}/.test(effectiveBody);
 
   useEffect(() => {
     if (current) setForm({ toEmail: current.toEmail, subject: current.subject, bodyHtml: current.bodyHtml });
@@ -91,19 +104,32 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
     });
   }
 
+  async function onOpenBulkConfirm() {
+    setBusy(true);
+    const summary = await getBulkValidationSummaryForCurrentUser(Array.from(selected));
+    setBulkSummary(summary);
+    setConfirmBulk(true);
+    setBusy(false);
+  }
+
   async function onBulkConfirm() {
     setBusy(true);
-    await bulkValidateAndSend(Array.from(selected));
+    try {
+      await bulkValidateAndSend(Array.from(selected));
+      setSelected(new Set());
+      setConfirmBulk(false);
+      setBulkSummary(null);
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erreur");
+    }
     setBusy(false);
-    setConfirmBulk(false);
-    setSelected(new Set());
-    router.refresh();
   }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (editing || busy) return;
-      if (e.key === "Enter") onValidateSend();
+      if (e.key === "Enter" && !blockedByVariables) onValidateSend();
       else if (e.key.toLowerCase() === "e") setEditing(true);
       else if (e.key.toLowerCase() === "r") onReject();
       else if (e.key === "ArrowRight") next();
@@ -122,7 +148,8 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
         <div className="rounded-lg border bg-amber-50 border-amber-200 p-4 flex items-center justify-between">
           <p className="text-sm">{selected.size} email(s) sélectionné(s) pour validation groupée</p>
           <button
-            onClick={() => setConfirmBulk(true)}
+            onClick={onOpenBulkConfirm}
+            disabled={busy}
             className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium"
           >
             Valider les {selected.size} emails
@@ -130,21 +157,44 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
         </div>
       )}
 
-      {confirmBulk && (
-        <div className="rounded-lg border bg-card p-4 space-y-2">
+      {confirmBulk && bulkSummary && (
+        <div className="rounded-lg border bg-card p-4 space-y-3">
           <p className="text-sm font-medium">
-            Vous êtes sur le point de valider et envoyer {selected.size} email(s) :
+            Vous allez valider {bulkSummary.count} email(s).
           </p>
-          <ul className="text-sm text-muted-foreground list-disc pl-5">
-            {drafts.filter((d) => selected.has(d.id)).map((d) => (
-              <li key={d.id}>{d.toEmail} ({d.prospect.firstName})</li>
-            ))}
+          <ul className="text-sm text-muted-foreground space-y-0.5">
+            <li>Destinataires : {bulkSummary.recipients.join(", ")}</li>
+            <li>Campagnes : {bulkSummary.campaigns.join(", ") || "—"}</li>
+            <li>Emails modifiés manuellement : {bulkSummary.modifiedCount}</li>
           </ul>
+
+          {bulkSummary.blockers.length > 0 ? (
+            <div className="rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-3 py-2 space-y-1">
+              <p className="font-medium">
+                Validation groupée bloquée : {bulkSummary.blockers.length} email(s) posent problème.
+              </p>
+              <ul className="list-disc pl-5">
+                {bulkSummary.blockers.map((b) => (
+                  <li key={b.id}>{b.toEmail} — {b.reason}</li>
+                ))}
+              </ul>
+              <p>Retirez-les de la sélection puis relancez la validation groupée.</p>
+            </div>
+          ) : (
+            <div className="rounded-md bg-green-50 border border-green-200 text-green-800 text-sm px-3 py-2">
+              Aucun avertissement : tous les emails peuvent être envoyés.
+            </div>
+          )}
+
           <div className="flex gap-2 pt-2">
-            <button onClick={onBulkConfirm} disabled={busy} className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm">
+            <button
+              onClick={onBulkConfirm}
+              disabled={busy || bulkSummary.blockers.length > 0}
+              className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm disabled:opacity-50"
+            >
               Confirmer l'envoi
             </button>
-            <button onClick={() => setConfirmBulk(false)} className="rounded-md border px-4 py-2 text-sm">Annuler</button>
+            <button onClick={() => { setConfirmBulk(false); setBulkSummary(null); }} className="rounded-md border px-4 py-2 text-sm">Annuler</button>
           </div>
         </div>
       )}
@@ -164,6 +214,11 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
               Étape : {current.sequenceStep ? (current.sequenceStep.order === 0 ? "Premier contact" : `Relance ${current.sequenceStep.order}`) : "Email manuel"} ·{" "}
               Prévu le {new Date(current.scheduledFor).toLocaleString("fr-FR")}
             </p>
+            {sandbox && (
+              <p className="text-xs text-amber-700 mt-1">
+                MODE SANDBOX — destinataire prévu : <strong>{current.toEmail}</strong> · destinataire réellement utilisé : <strong>{sandbox.email || "(SANDBOX_EMAIL non défini)"}</strong>
+              </p>
+            )}
           </div>
           <input
             type="checkbox"
@@ -173,9 +228,12 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
           />
         </div>
 
-        {current.missingVariables.length > 0 && (
-          <div className="rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-3 py-2">
-            Variables manquantes : {current.missingVariables.join(", ")}. Corrigez avant d'envoyer.
+        {blockedByVariables && (
+          <div className="rounded-md bg-red-50 border border-red-200 text-red-800 text-sm px-3 py-2 space-y-1">
+            <p className="font-medium">
+              Variable manquante{current.missingVariables.length > 1 ? "s" : ""} : {current.missingVariables.join(", ") || "voir le texte ci-dessous"}.
+            </p>
+            <p>"Valider et envoyer" est bloqué tant que le message contient {"{{...}}"}. Options : complétez la fiche prospect, modifiez le mail pour retirer la variable, ou saisissez la valeur manuellement.</p>
           </div>
         )}
 
@@ -196,8 +254,24 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
           </div>
         ) : (
           <div className="space-y-2">
-            <p className="font-medium">Objet : {current.subject}</p>
-            <div className="prose prose-sm max-w-none border rounded-md p-4 bg-muted/30" dangerouslySetInnerHTML={{ __html: current.bodyHtml }} />
+            <div className="flex items-center justify-between">
+              <p className="font-medium">Objet : {current.subject}</p>
+              <button onClick={() => setGmailPreview((v) => !v)} className="text-xs text-primary hover:underline">
+                {gmailPreview ? "Fermer l'aperçu Gmail" : "Aperçu Gmail"}
+              </button>
+            </div>
+            {gmailPreview ? (
+              <div className="border rounded-md overflow-hidden">
+                <div className="bg-muted/60 px-4 py-2 text-sm space-y-0.5 border-b">
+                  <p><span className="text-muted-foreground">De :</span> Moi</p>
+                  <p><span className="text-muted-foreground">À :</span> {sandbox ? sandbox.email || "(SANDBOX_EMAIL non défini)" : current.toEmail}</p>
+                  <p><span className="text-muted-foreground">Objet :</span> {current.subject}</p>
+                </div>
+                <div className="prose prose-sm max-w-none p-4 bg-white" dangerouslySetInnerHTML={{ __html: current.bodyHtml }} />
+              </div>
+            ) : (
+              <div className="prose prose-sm max-w-none border rounded-md p-4 bg-muted/30" dangerouslySetInnerHTML={{ __html: current.bodyHtml }} />
+            )}
           </div>
         )}
 
@@ -211,10 +285,10 @@ export function ValidationQueue({ drafts }: { drafts: DraftEmail[] }) {
           <button onClick={onPostpone} disabled={busy} className="rounded-md border px-4 py-2 text-sm hover:bg-muted">
             Reporter (+24h)
           </button>
-          <button onClick={onValidateSchedule} disabled={busy} className="rounded-md border px-4 py-2 text-sm hover:bg-muted">
+          <button onClick={onValidateSchedule} disabled={busy || blockedByVariables} className="rounded-md border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50">
             Valider et programmer
           </button>
-          <button onClick={onValidateSend} disabled={busy} className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium">
+          <button onClick={onValidateSend} disabled={busy || blockedByVariables} className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium disabled:opacity-50">
             Valider et envoyer
           </button>
         </div>

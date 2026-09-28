@@ -37,7 +37,7 @@ export async function draftEmailForStep(params: {
     new Set([...subjectResult.missingVariables, ...bodyResult.missingVariables])
   );
 
-  return prisma.scheduledEmail.create({
+  const created = await prisma.scheduledEmail.create({
     data: {
       userId,
       prospectId: prospect.id,
@@ -51,6 +51,8 @@ export async function draftEmailForStep(params: {
       scheduledFor,
     },
   });
+  await logActivity(userId, "EMAIL_PREPARED", prospect.id, { step: step.order }, campaign.id);
+  return created;
 }
 
 /**

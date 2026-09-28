@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { requireUserId } from "@/lib/auth/session";
+import { isSandboxMode } from "@/lib/gmail/client";
 import { ValidationQueue } from "./validation-queue";
 
 export default async function AValiderPage() {
@@ -28,6 +29,7 @@ export default async function AValiderPage() {
           ...d,
           scheduledFor: d.scheduledFor.toISOString(),
         }))}
+        sandbox={isSandboxMode() ? { email: process.env.SANDBOX_EMAIL ?? "" } : null}
       />
     </div>
   );

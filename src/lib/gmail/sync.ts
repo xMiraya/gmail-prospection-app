@@ -81,8 +81,9 @@ export async function syncGmailReplies(userId: string) {
       });
 
       await logActivity(userId, "REPLY_RECEIVED", thread.prospectId);
+      await logActivity(userId, "REPLY_DETECTED", thread.prospectId, { gmailMessageId: msg.id });
       if (cancelled.count > 0) {
-        await logActivity(userId, "EMAIL_CANCELLED", thread.prospectId, {
+        await logActivity(userId, "FOLLOWUPS_CANCELLED", thread.prospectId, {
           count: cancelled.count,
         });
       }
