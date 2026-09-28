@@ -1,0 +1,475 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// AUTH / USER
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  signatureHtml String?   @default("")
+
+  googleAccount   GoogleAccount?
+  prospects       Prospect[]
+  companies       Company[]
+  campaigns       Campaign[]
+  sequences       Sequence[]
+  templates       EmailTemplate[]
+  emailMessages   EmailMessage[]
+  scheduledEmails ScheduledEmail[]
+  notifications   Notification[]
+  activities      Activity[]
+  blacklist       Blacklist[]
+  tags            Tag[]
+  settings        ProspectionSettings?
+}
+
+// Stores Gmail OAuth connection. Tokens are server-only, never sent to the client.
+model GoogleAccount {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  email         String
+  accessToken   String    @db.Text
+  refreshToken  String    @db.Text
+  expiryDate    DateTime
+  scope         String    @db.Text
+  historyId     String?   // Gmail History API cursor, used to detect new replies incrementally
+  lastSyncAt    DateTime?
+  connected     Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// ============================================================
+// CRM
+// ============================================================
+
+model Company {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String
+  website   String?
+  sector    String?
+  city      String?
+  country   String?
+
+  prospects Prospect[]
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+enum ProspectStatus {
+  NOUVEAU
+  A_CONTACTER
+  EMAIL_PROGRAMME
+  CONTACTE
+  RELANCE_1
+  RELANCE_2
+  RELANCE_3
+  A_REPONDU
+  INTERESSE
+  A_RAPPELER
+  RENDEZ_VOUS
+  PROPOSITION_ENVOYEE
+  PAS_INTERESSE
+  CLIENT
+  NE_PLUS_CONTACTER
+  A_VERIFIER
+}
+
+model Prospect {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  firstName    String
+  lastName     String?
+  email        String
+  phone        String?
+  website      String?
+  sector       String?
+  city         String?
+  country      String?
+  linkedinUrl  String?
+  source       String?
+  notes        String?  @db.Text
+
+  companyId    String?
+  company      Company? @relation(fields: [companyId], references: [id])
+
+  status       ProspectStatus @default(NOUVEAU)
+
+  lastContactAt   DateTime?
+  nextFollowUpAt  DateTime?
+
+  optOutAt     DateTime? // date d'opposition / désinscription (RGPD)
+
+  campaignProspects CampaignProspect[]
+  emailMessages     EmailMessage[]
+  scheduledEmails   ScheduledEmail[]
+  notes_            ProspectNote[]
+  tags              ProspectTag[]
+  activities        Activity[]
+  threads           EmailThread[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, email])
+  @@index([userId, status])
+}
+
+model ProspectNote {
+  id         String   @id @default(cuid())
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  content    String   @db.Text
+  createdAt  DateTime @default(now())
+}
+
+model Tag {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  color     String        @default("#6366f1")
+  prospects ProspectTag[]
+
+  @@unique([userId, name])
+}
+
+model ProspectTag {
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  tagId      String
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([prospectId, tagId])
+}
+
+// ============================================================
+// TEMPLATES
+// ============================================================
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String
+  subject   String
+  body      String   @db.Text // HTML, contains {{variables}}
+  category  String?
+  variables String[] // detected variables, e.g. ["prenom","entreprise"]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sequenceSteps SequenceStep[]
+  emailMessages EmailMessage[]
+}
+
+// ============================================================
+// SEQUENCES
+// ============================================================
+
+model Sequence {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  steps     SequenceStep[]
+  campaigns Campaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SequenceStep {
+  id          String   @id @default(cuid())
+  sequenceId  String
+  sequence    Sequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+
+  order        Int      // 0 = email initial, 1 = relance 1, etc.
+  delayDays    Int      @default(0) // délai depuis l'étape précédente
+  templateId   String
+  template     EmailTemplate @relation(fields: [templateId], references: [id])
+  approxHour   Int      @default(9) // heure approximative d'envoi (0-23)
+
+  scheduledEmails ScheduledEmail[]
+
+  @@unique([sequenceId, order])
+}
+
+// ============================================================
+// CAMPAIGNS
+// ============================================================
+
+enum CampaignStatus {
+  BROUILLON
+  PROGRAMMEE
+  ACTIVE
+  EN_PAUSE
+  TERMINEE
+}
+
+enum AutomationMode {
+  MANUEL          // chaque email + chaque relance nécessite validation humaine
+  SEMI_AUTOMATIQUE // email initial validé manuellement, relances préparées auto mais validées manuellement
+  AUTOMATIQUE      // campagne validée globalement, envois auto selon règles
+}
+
+model Campaign {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  status      CampaignStatus @default(BROUILLON)
+
+  sequenceId  String?
+  sequence    Sequence?      @relation(fields: [sequenceId], references: [id])
+
+  automationMode AutomationMode @default(MANUEL)
+
+  dailyLimit   Int      @default(25)
+  sendStartHour Int     @default(9)
+  sendEndHour   Int     @default(17)
+  sendDays      Int[]   @default([1,2,3,4,5]) // 0=dimanche ... 6=samedi
+
+  prospects   CampaignProspect[]
+  scheduledEmails ScheduledEmail[]
+  emailMessages   EmailMessage[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  startedAt   DateTime?
+  finishedAt  DateTime?
+}
+
+model CampaignProspect {
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  prospectId String
+  prospect   Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now())
+  currentStepOrder Int @default(0)
+
+  @@id([campaignId, prospectId])
+}
+
+// ============================================================
+// EMAILS — coeur du système de validation humaine
+// ============================================================
+
+enum EmailStatus {
+  BROUILLON
+  A_VALIDER
+  MODIFIE
+  VALIDE
+  PROGRAMME
+  ENVOYE
+  REFUSE
+  ECHEC
+}
+
+// Un email préparé (par une séquence/campagne ou manuellement), en attente de validation
+// avant envoi effectif. Rien ne part tant que status != VALIDE/PROGRAMME et que le job
+// d'envoi ne l'a pas traité.
+model ScheduledEmail {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  prospectId    String
+  prospect      Prospect    @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  campaignId    String?
+  campaign      Campaign?   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  sequenceStepId String?
+  sequenceStep   SequenceStep? @relation(fields: [sequenceStepId], references: [id])
+
+  status        EmailStatus @default(A_VALIDER)
+
+  toEmail       String
+  subject       String
+  bodyHtml      String      @db.Text
+  missingVariables String[] @default([])
+
+  scheduledFor  DateTime    // créneau calculé par le planificateur
+  validatedAt   DateTime?
+  validatedBy   String?     // userId qui a validé
+  sentAt        DateTime?
+  failReason    String?
+
+  threadId      String?     // Gmail thread id, renseigné après envoi (ou repris du 1er email pour les relances)
+  gmailMessageId String?
+
+  // Idempotence : empêche un double envoi si le cron tourne deux fois sur le même item
+  lockedAt      DateTime?
+
+  emailMessage  EmailMessage?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([status, scheduledFor])
+}
+
+// Trace définitive d'un email réellement envoyé (ou reçu) via Gmail.
+model EmailMessage {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  prospectId    String
+  prospect      Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  campaignId    String?
+  campaign      Campaign? @relation(fields: [campaignId], references: [id])
+
+  templateId    String?
+  template      EmailTemplate? @relation(fields: [templateId], references: [id])
+
+  scheduledEmailId String?      @unique
+  scheduledEmail   ScheduledEmail? @relation(fields: [scheduledEmailId], references: [id])
+
+  direction     String   // "OUTBOUND" | "INBOUND"
+  gmailMessageId String  @unique
+  gmailThreadId  String
+
+  subject       String
+  snippet       String?  @db.Text
+  bodyHtml      String?  @db.Text
+
+  sentAt        DateTime
+
+  thread        EmailThread? @relation(fields: [gmailThreadId], references: [gmailThreadId])
+
+  createdAt     DateTime @default(now())
+}
+
+// Regroupe tous les messages d'un fil Gmail pour un prospect (détection de réponse).
+model EmailThread {
+  id            String   @id @default(cuid())
+  gmailThreadId String   @unique
+
+  prospectId    String
+  prospect      Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+
+  hasReply      Boolean  @default(false)
+  lastMessageAt DateTime?
+
+  messages      EmailMessage[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ============================================================
+// BLACKLIST / RGPD
+// ============================================================
+
+model Blacklist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  email     String?
+  domain    String?
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, email])
+  @@index([userId, domain])
+}
+
+// ============================================================
+// NOTIFICATIONS / ACTIVITY LOG
+// ============================================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      String
+  title     String
+  message   String   @db.Text
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+}
+
+enum ActivityType {
+  EMAIL_SENT
+  EMAIL_FAILED
+  EMAIL_SCHEDULED
+  EMAIL_CANCELLED
+  EMAIL_VALIDATED
+  EMAIL_REJECTED
+  REPLY_RECEIVED
+  PROSPECT_CREATED
+  STATUS_CHANGED
+  CAMPAIGN_STARTED
+  CAMPAIGN_PAUSED
+  CAMPAIGN_FINISHED
+}
+
+model Activity {
+  id         String       @id @default(cuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type       ActivityType
+  prospectId String?
+  prospect   Prospect?    @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  campaignId String?
+
+  metadata   Json?
+  createdAt  DateTime     @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ============================================================
+// PARAMÈTRES
+// ============================================================
+
+model ProspectionSettings {
+  id       String @id @default(cuid())
+  userId   String @unique
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  dailyLimit      Int     @default(25)
+  sendStartHour   Int     @default(9)
+  sendEndHour     Int     @default(17)
+  sendDays        Int[]   @default([1,2,3,4,5])
+  minIntervalMin  Int     @default(3) // intervalle minimum en minutes entre deux emails
+  maxFollowUps    Int     @default(3)
+  automationMode  AutomationMode @default(MANUEL)
+
+  updatedAt DateTime @updatedAt
+}

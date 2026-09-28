@@ -1,0 +1,7 @@
+{
+  "crons": [
+    { "path": "/api/cron/sync-gmail", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/send-emails", "schedule": "*/3 * * * *" },
+    { "path": "/api/cron/prepare-followups", "schedule": "0 * * * *" }
+  ]
+}
