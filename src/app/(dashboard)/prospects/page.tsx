@@ -2,25 +2,19 @@ import { prisma } from "@/lib/db/prisma";
 import { requireUserId } from "@/lib/auth/session";
 import Link from "next/link";
 import { Prisma } from "@prisma/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EmptyState } from "@/components/empty-state";
+import { ProspectStatusBadge, STATUS_LABELS } from "@/components/status-badge";
+import { Upload, UserPlus, Users, Search } from "lucide-react";
 
-const STATUS_LABELS: Record<string, string> = {
-  NOUVEAU: "Nouveau",
-  A_CONTACTER: "À contacter",
-  EMAIL_PROGRAMME: "Email programmé",
-  CONTACTE: "Contacté",
-  RELANCE_1: "Relance 1",
-  RELANCE_2: "Relance 2",
-  RELANCE_3: "Relance 3",
-  A_REPONDU: "A répondu",
-  INTERESSE: "Intéressé",
-  A_RAPPELER: "À rappeler",
-  RENDEZ_VOUS: "Rendez-vous",
-  PROPOSITION_ENVOYEE: "Proposition envoyée",
-  PAS_INTERESSE: "Pas intéressé",
-  CLIENT: "Client",
-  NE_PLUS_CONTACTER: "Ne plus contacter",
-  A_VERIFIER: "À vérifier",
-};
+function initials(firstName: string, lastName?: string | null) {
+  return `${firstName[0] ?? ""}${lastName?.[0] ?? ""}`.toUpperCase();
+}
 
 export default async function ProspectsPage({
   searchParams,
@@ -28,6 +22,8 @@ export default async function ProspectsPage({
   searchParams: { q?: string; status?: string };
 }) {
   const userId = await requireUserId();
+
+  const totalCount = await prisma.prospect.count({ where: { userId } });
 
   const where: Prisma.ProspectWhereInput = {
     userId,
@@ -47,87 +43,104 @@ export default async function ProspectsPage({
 
   const prospects = await prisma.prospect.findMany({
     where,
-    include: { company: true },
+    include: { company: true, campaignProspects: { include: { campaign: true }, take: 1 } },
     orderBy: { createdAt: "desc" },
     take: 200,
   });
 
+  if (totalCount === 0) {
+    return (
+      <EmptyState
+        icon={Users}
+        title="Aucun prospect pour le moment"
+        description="Importez votre première liste de prospects pour commencer votre prospection, ou ajoutez-en un manuellement."
+        actions={
+          <>
+            <Button asChild>
+              <Link href="/prospects/import"><Upload className="mr-1.5" /> Importer CSV</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/prospects/new"><UserPlus className="mr-1.5" /> Ajouter manuellement</Link>
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Prospects</h1>
-          <p className="text-muted-foreground text-sm mt-1">{prospects.length} prospects affichés</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Prospects</h1>
+          <p className="text-muted-foreground text-sm mt-1">{prospects.length} sur {totalCount} prospects affichés</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/prospects/import" className="rounded-md border px-4 py-2 text-sm hover:bg-muted">
-            Importer un CSV
-          </Link>
-          <Link href="/prospects/new" className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium">
-            Ajouter un prospect
-          </Link>
+          <Button asChild variant="outline">
+            <Link href="/prospects/import"><Upload className="mr-1.5" /> Importer CSV</Link>
+          </Button>
+          <Button asChild>
+            <Link href="/prospects/new"><UserPlus className="mr-1.5" /> Ajouter un prospect</Link>
+          </Button>
         </div>
       </div>
 
       <form className="flex gap-2" action="/prospects">
-        <input
-          name="q"
-          defaultValue={searchParams.q}
-          placeholder="Rechercher (nom, email, ville, secteur...)"
-          className="flex-1 rounded-md border px-3 py-2 text-sm"
-        />
-        <select name="status" defaultValue={searchParams.status ?? ""} className="rounded-md border px-3 py-2 text-sm">
-          <option value="">Tous les statuts</option>
-          {Object.entries(STATUS_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <button className="rounded-md border px-4 py-2 text-sm hover:bg-muted">Filtrer</button>
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input name="q" defaultValue={searchParams.q} placeholder="Rechercher (nom, email, ville, secteur...)" className="pl-8" />
+        </div>
+        <Select name="status" defaultValue={searchParams.status ?? "all"}>
+          <SelectTrigger className="w-52"><SelectValue placeholder="Tous les statuts" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous les statuts</SelectItem>
+            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="submit" variant="outline">Filtrer</Button>
       </form>
 
-      <div className="rounded-lg border bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-muted-foreground">
-            <tr>
-              <th className="text-left px-4 py-2 font-medium">Nom</th>
-              <th className="text-left px-4 py-2 font-medium">Entreprise</th>
-              <th className="text-left px-4 py-2 font-medium">Email</th>
-              <th className="text-left px-4 py-2 font-medium">Ville</th>
-              <th className="text-left px-4 py-2 font-medium">Statut</th>
-              <th className="text-left px-4 py-2 font-medium">Ajouté le</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Nom</TableHead>
+              <TableHead>Entreprise</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Secteur</TableHead>
+              <TableHead>Ville</TableHead>
+              <TableHead>Campagne</TableHead>
+              <TableHead>Statut</TableHead>
+              <TableHead>Dernier contact</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {prospects.map((p) => (
-              <tr key={p.id} className="border-t hover:bg-muted/40">
-                <td className="px-4 py-2">
-                  <Link href={`/prospects/${p.id}`} className="font-medium hover:underline">
-                    {p.firstName} {p.lastName}
+              <TableRow key={p.id} className="cursor-pointer">
+                <TableCell>
+                  <Link href={`/prospects/${p.id}`} className="flex items-center gap-2 hover:underline">
+                    <Avatar className="h-7 w-7">
+                      <AvatarFallback className="bg-brand/10 text-brand text-[10px]">{initials(p.firstName, p.lastName)}</AvatarFallback>
+                    </Avatar>
+                    <span className="font-medium">{p.firstName} {p.lastName}</span>
                   </Link>
-                </td>
-                <td className="px-4 py-2">{p.company?.name ?? "—"}</td>
-                <td className="px-4 py-2">{p.email}</td>
-                <td className="px-4 py-2">{p.city ?? "—"}</td>
-                <td className="px-4 py-2">
-                  <span className="badge bg-accent text-primary">{STATUS_LABELS[p.status]}</span>
-                </td>
-                <td className="px-4 py-2 text-muted-foreground">
-                  {p.createdAt.toLocaleDateString("fr-FR")}
-                </td>
-              </tr>
+                </TableCell>
+                <TableCell className="text-muted-foreground">{p.company?.name ?? "—"}</TableCell>
+                <TableCell className="text-muted-foreground">{p.email}</TableCell>
+                <TableCell className="text-muted-foreground">{p.sector ?? "—"}</TableCell>
+                <TableCell className="text-muted-foreground">{p.city ?? "—"}</TableCell>
+                <TableCell className="text-muted-foreground">{p.campaignProspects[0]?.campaign.name ?? "—"}</TableCell>
+                <TableCell><ProspectStatusBadge status={p.status} /></TableCell>
+                <TableCell className="text-muted-foreground whitespace-nowrap">
+                  {p.lastContactAt ? p.lastContactAt.toLocaleDateString("fr-FR") : "Jamais"}
+                </TableCell>
+              </TableRow>
             ))}
-            {prospects.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                  Aucun prospect. Importez un fichier CSV ou ajoutez-en un manuellement.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }

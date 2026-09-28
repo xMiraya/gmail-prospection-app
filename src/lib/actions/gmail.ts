@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/db/prisma";
 import { requireUserId } from "@/lib/auth/session";
-import { sendGmailMessage } from "@/lib/gmail/client";
+import { sendGmailMessage, getGmailClientForUser } from "@/lib/gmail/client";
 import { renderTemplate } from "@/lib/templates/render";
 import { revalidatePath } from "next/cache";
 
@@ -10,6 +10,14 @@ export async function disconnectGmail() {
   const userId = await requireUserId();
   await prisma.googleAccount.update({ where: { userId }, data: { connected: false } });
   revalidatePath("/parametres/gmail");
+}
+
+/** Vérifie que la connexion Gmail fonctionne réellement (appel API léger, sans envoi). */
+export async function testGmailConnection() {
+  const userId = await requireUserId();
+  const gmail = await getGmailClientForUser(userId);
+  const profile = await gmail.users.getProfile({ userId: "me" });
+  return { email: profile.data.emailAddress ?? null, messagesTotal: profile.data.messagesTotal ?? 0 };
 }
 
 /**

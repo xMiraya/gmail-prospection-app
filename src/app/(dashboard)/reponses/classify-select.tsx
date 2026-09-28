@@ -2,21 +2,28 @@
 
 import { useTransition } from "react";
 import { updateProspectStatus } from "@/lib/actions/prospects";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const CLASSIFICATIONS = ["INTERESSE", "A_RAPPELER", "RENDEZ_VOUS", "PAS_INTERESSE", "NE_PLUS_CONTACTER"];
+const CLASSIFICATIONS = [
+  { value: "INTERESSE", label: "Intéressé" },
+  { value: "A_RAPPELER", label: "À rappeler" },
+  { value: "RENDEZ_VOUS", label: "Rendez-vous" },
+  { value: "PAS_INTERESSE", label: "Pas intéressé" },
+  { value: "NE_PLUS_CONTACTER", label: "Ne plus contacter" },
+];
 
 export function ClassifySelect({ prospectId, current }: { prospectId: string; current: string }) {
   const [pending, startTransition] = useTransition();
   return (
-    <select
+    <Select
       defaultValue={current}
       disabled={pending}
-      onChange={(e) => startTransition(() => updateProspectStatus(prospectId, e.target.value))}
-      className="rounded-md border px-2 py-1 text-xs"
+      onValueChange={(v) => startTransition(() => updateProspectStatus(prospectId, v))}
     >
-      {CLASSIFICATIONS.map((s) => (
-        <option key={s} value={s}>{s.replaceAll("_", " ")}</option>
-      ))}
-    </select>
+      <SelectTrigger className="h-8 w-48"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {CLASSIFICATIONS.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
   );
 }

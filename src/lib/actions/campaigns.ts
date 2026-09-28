@@ -66,6 +66,85 @@ export async function getCampaignValidationSummary(campaignId: string, prospectI
   };
 }
 
+export type NewCampaignInput = {
+  name: string;
+  description?: string;
+  sequenceId: string;
+  dailyLimit: number;
+  sendStartHour: number;
+  sendEndHour: number;
+  sendDays: number[];
+  automationMode: "MANUEL" | "SEMI_AUTOMATIQUE" | "AUTOMATIQUE";
+};
+
+/**
+ * Récapitulatif de l'étape 5 du wizard de création de campagne, calculé AVANT
+ * toute création en base (aucune campagne ni aucun brouillon n'existe encore
+ * à ce stade). Utilise les mêmes règles que getCampaignValidationSummary.
+ */
+export async function getNewCampaignSummary(prospectIds: string[], dailyLimit: number) {
+  const userId = await requireUserId();
+  const prospects = await prisma.prospect.findMany({ where: { id: { in: prospectIds }, userId } });
+
+  let validEmails = 0;
+  let invalidEmails = 0;
+  let alreadyContacted = 0;
+  let blacklisted = 0;
+
+  for (const p of prospects) {
+    if (!EMAIL_RE.test(p.email)) {
+      invalidEmails++;
+      continue;
+    }
+    if (await isBlacklisted(userId, p.email) || p.status === "NE_PLUS_CONTACTER") {
+      blacklisted++;
+      continue;
+    }
+    if (p.lastContactAt) {
+      alreadyContacted++;
+      continue;
+    }
+    validEmails++;
+  }
+
+  return {
+    totalProspects: prospects.length,
+    validEmails,
+    invalidEmails,
+    alreadyContacted,
+    blacklisted,
+    dailyLimit,
+    scheduledToday: Math.min(validEmails, dailyLimit),
+    scheduledLater: Math.max(0, validEmails - dailyLimit),
+  };
+}
+
+/**
+ * Point final du wizard de création de campagne : crée la campagne PUIS prépare
+ * (via launchCampaign, déjà utilisé ailleurs) les premiers emails en statut
+ * A_VALIDER. Aucun email n'est envoyé ici — ils atterrissent tous dans "À valider".
+ */
+export async function createCampaignAndPrepare(input: NewCampaignInput, prospectIds: string[]) {
+  const userId = await requireUserId();
+  const campaign = await prisma.campaign.create({
+    data: {
+      userId,
+      name: input.name,
+      description: input.description || null,
+      sequenceId: input.sequenceId,
+      dailyLimit: input.dailyLimit,
+      sendStartHour: input.sendStartHour,
+      sendEndHour: input.sendEndHour,
+      sendDays: input.sendDays,
+      automationMode: input.automationMode,
+    },
+  });
+  const result = await launchCampaign({ userId, campaignId: campaign.id, prospectIds });
+  revalidatePath("/campagnes");
+  revalidatePath("/a-valider");
+  return { campaignId: campaign.id, ...result };
+}
+
 export async function launchCampaignAction(campaignId: string, prospectIds: string[]) {
   const userId = await requireUserId();
   const result = await launchCampaign({ userId, campaignId, prospectIds });

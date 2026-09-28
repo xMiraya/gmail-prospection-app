@@ -3,6 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { analyzeCsv, importCsv, type CsvPreviewRow } from "@/lib/actions/prospects";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { UploadCloud, CheckCircle2 } from "lucide-react";
 
 const FIELDS = [
   { key: "email", label: "Email *", required: true },
@@ -49,106 +55,92 @@ export default function ImportCsvPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <h1 className="text-2xl font-semibold">Importer des prospects (CSV)</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Importer des prospects</h1>
 
       {!preview && (
-        <div className="rounded-lg border-2 border-dashed p-10 text-center">
-          <input
-            type="file"
-            accept=".csv"
-            onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-            className="text-sm"
-          />
-          <p className="text-xs text-muted-foreground mt-2">Fichier .csv avec une ligne d'en-têtes</p>
-        </div>
+        <Card>
+          <CardContent className="pt-6">
+            <label className="flex flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed py-14 cursor-pointer hover:bg-secondary/30 transition-colors">
+              <UploadCloud className="h-8 w-8 text-muted-foreground" />
+              <span className="text-sm font-medium">Cliquez pour choisir un fichier .csv</span>
+              <span className="text-xs text-muted-foreground">Avec une ligne d'en-têtes</span>
+              <input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+            </label>
+          </CardContent>
+        </Card>
       )}
 
       {preview && !result && (
         <div className="space-y-6">
           <div className="grid grid-cols-3 gap-4">
-            <div className="rounded-lg border bg-card p-4">
-              <p className="text-sm text-muted-foreground">Lignes détectées</p>
-              <p className="text-2xl font-semibold">{preview.total}</p>
-            </div>
-            <div className="rounded-lg border bg-card p-4">
-              <p className="text-sm text-muted-foreground">Emails invalides</p>
-              <p className="text-2xl font-semibold text-red-600">{preview.invalidCount}</p>
-            </div>
-            <div className="rounded-lg border bg-card p-4">
-              <p className="text-sm text-muted-foreground">Doublons détectés</p>
-              <p className="text-2xl font-semibold text-amber-600">{preview.duplicateCount}</p>
-            </div>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Lignes détectées</p><p className="text-2xl font-semibold">{preview.total}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Emails invalides</p><p className="text-2xl font-semibold text-destructive">{preview.invalidCount}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Doublons détectés</p><p className="text-2xl font-semibold text-warning-foreground dark:text-warning">{preview.duplicateCount}</p></CardContent></Card>
           </div>
 
-          <div className="rounded-lg border bg-card p-4 space-y-3">
-            <h2 className="font-semibold text-sm">Mapper les colonnes</h2>
-            <div className="grid grid-cols-2 gap-3">
+          <Card>
+            <CardHeader><CardTitle className="text-base">Mapper les colonnes</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3">
               {FIELDS.map((f) => (
-                <div key={f.key}>
+                <div key={f.key} className="space-y-1">
                   <label className="text-xs font-medium">{f.label}</label>
-                  <select
-                    value={mapping[f.key] ?? ""}
-                    onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value }))}
-                    className="mt-1 w-full rounded-md border px-2 py-1.5 text-sm"
-                  >
-                    <option value="">— Ne pas importer —</option>
-                    {columns.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <Select value={mapping[f.key] ?? "__none__"} onValueChange={(v) => setMapping((m) => ({ ...m, [f.key]: v === "__none__" ? "" : v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Ne pas importer —</SelectItem>
+                      {columns.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
               ))}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-          <div className="rounded-lg border bg-card overflow-hidden">
-            <p className="px-4 py-2 text-sm font-semibold border-b">Aperçu (5 premières lignes)</p>
-            <table className="w-full text-xs">
-              <thead className="bg-muted">
-                <tr>
-                  {columns.map((c) => <th key={c} className="text-left px-3 py-1.5">{c}</th>)}
-                  <th className="text-left px-3 py-1.5">Statut</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.rows.slice(0, 5).map((r: { row: CsvPreviewRow; invalid: boolean; duplicateInFile: boolean; duplicateExisting: boolean }, i: number) => (
-                  <tr key={i} className="border-t">
-                    {columns.map((c) => <td key={c} className="px-3 py-1.5">{r.row[c]}</td>)}
-                    <td className="px-3 py-1.5">
-                      {r.invalid ? <span className="text-red-600">Email invalide</span>
-                        : r.duplicateExisting ? <span className="text-amber-600">Déjà existant</span>
-                        : r.duplicateInFile ? <span className="text-amber-600">Doublon dans le fichier</span>
-                        : <span className="text-green-600">OK</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Aperçu (5 premières lignes)</CardTitle></CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {columns.map((c) => <TableHead key={c}>{c}</TableHead>)}
+                    <TableHead>Statut</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {preview.rows.slice(0, 5).map((r: { row: CsvPreviewRow; invalid: boolean; duplicateInFile: boolean; duplicateExisting: boolean }, i: number) => (
+                    <TableRow key={i}>
+                      {columns.map((c) => <TableCell key={c}>{r.row[c]}</TableCell>)}
+                      <TableCell>
+                        {r.invalid ? <Badge variant="destructive">Email invalide</Badge>
+                          : r.duplicateExisting ? <Badge variant="warning">Déjà existant</Badge>
+                          : r.duplicateInFile ? <Badge variant="warning">Doublon</Badge>
+                          : <Badge variant="success">OK</Badge>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
 
-          <button
-            onClick={onImport}
-            disabled={loading || !mapping.email || !mapping.firstName}
-            className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium disabled:opacity-50"
-          >
-            {loading ? "Import en cours..." : `Importer les prospects valides`}
-          </button>
+          <Button onClick={onImport} disabled={loading || !mapping.email || !mapping.firstName} size="lg">
+            {loading ? "Import en cours..." : "Importer les prospects valides"}
+          </Button>
         </div>
       )}
 
       {result && (
-        <div className="rounded-lg border bg-card p-6 space-y-3">
-          <p className="text-sm">
-            <strong>{result.imported}</strong> prospects importés, <strong>{result.skipped}</strong> ignorés
-            (emails invalides ou déjà existants).
-          </p>
-          <button
-            onClick={() => router.push("/prospects")}
-            className="rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium"
-          >
-            Voir les prospects
-          </button>
-        </div>
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex items-center gap-2 text-success">
+              <CheckCircle2 />
+              <p className="text-sm">
+                <strong>{result.imported}</strong> prospects importés, <strong>{result.skipped}</strong> ignorés (emails invalides ou déjà existants).
+              </p>
+            </div>
+            <Button onClick={() => router.push("/prospects")}>Voir les prospects</Button>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
