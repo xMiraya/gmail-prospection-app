@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
 import { CheckCircle2 } from "lucide-react";
+import { CLASSIFICATION_LABELS, type ReplyClassification } from "@/lib/gmail/classify";
 
 export default async function ATraiterPage() {
   const userId = await requireUserId();
@@ -19,9 +20,9 @@ export default async function ATraiterPage() {
     prisma.scheduledEmail.findMany({ where: { userId, status: "ECHEC" }, include: { prospect: true }, take: 50 }),
     prisma.prospect.findMany({ where: { userId, status: { in: ["INTERESSE", "RENDEZ_VOUS"] } }, take: 50 }),
     prisma.emailMessage.findMany({
-      where: { userId, direction: "INBOUND", draftStatus: "PENDING" },
+      where: { userId, direction: "INBOUND", draftStatus: "PENDING", prospectId: { not: null } },
       include: { prospect: true },
-      orderBy: { sentAt: "desc" },
+      orderBy: [{ priority: "asc" }, { sentAt: "desc" }],
       take: 50,
     }),
   ]);
@@ -55,8 +56,12 @@ export default async function ATraiterPage() {
       <Section title="Réponses Gmail à traiter" count={pendingReplies.length}>
         {pendingReplies.map((m) => (
           <Link key={m.id} href="/reponses" className="block px-4 py-3 text-sm hover:bg-secondary/40">
-            {m.prospect.firstName} {m.prospect.lastName} — <span className="text-muted-foreground">{m.subject}</span>
-            {m.classification && <Badge variant="secondary" className="ml-2 text-[10px]">{m.classification}</Badge>}
+            {m.prospect?.firstName} {m.prospect?.lastName} — <span className="text-muted-foreground">{m.subject}</span>
+            {m.classification && (
+              <Badge variant="secondary" className="ml-2 text-[10px]">
+                {CLASSIFICATION_LABELS[m.classification as ReplyClassification] ?? m.classification}
+              </Badge>
+            )}
           </Link>
         ))}
         {pendingReplies.length === 0 && <p className="px-4 py-3 text-sm text-muted-foreground">Rien à traiter.</p>}
