@@ -6,21 +6,32 @@ import { EmptyState } from "@/components/empty-state";
 import { Inbox } from "lucide-react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
+import { VISIBLE_MESSAGE_TYPES } from "@/lib/gmail/message-filter";
 
 export default async function ReponsesPage() {
   const userId = await requireUserId();
 
   const account = await prisma.googleAccount.findUnique({ where: { userId } });
 
-  const prospectsWithReplies = await prisma.prospect.findMany({
-    where: { userId, emailMessages: { some: { direction: "INBOUND" } } },
-    include: {
-      company: true,
-      campaignProspects: { include: { campaign: true }, take: 1 },
-      emailMessages: { orderBy: { sentAt: "asc" } },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+  const [prospectsWithReplies, ignored] = await Promise.all([
+    prisma.prospect.findMany({
+      where: { userId, emailMessages: { some: { direction: "INBOUND", messageType: { in: VISIBLE_MESSAGE_TYPES } } } },
+      include: {
+        company: true,
+        campaignProspects: { include: { campaign: true }, take: 1 },
+        emailMessages: {
+          where: { OR: [{ direction: "OUTBOUND" }, { direction: "INBOUND", messageType: { in: VISIBLE_MESSAGE_TYPES } }] },
+          orderBy: { sentAt: "asc" },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    }),
+    prisma.emailMessage.findMany({
+      where: { userId, direction: "INBOUND", prospectId: null },
+      orderBy: { sentAt: "desc" },
+      take: 100,
+    }),
+  ]);
 
   const syncStatus = {
     connected: !!account?.connected,
@@ -28,6 +39,17 @@ export default async function ReponsesPage() {
     lastSyncNewCount: account?.lastSyncNewCount ?? null,
     lastSyncError: account?.lastSyncError ?? null,
   };
+
+  const ignoredList = ignored.map((m) => ({
+    id: m.id,
+    fromEmail: m.fromEmail ?? "",
+    fromName: m.fromName,
+    subject: m.subject,
+    snippet: m.snippet,
+    sentAt: m.sentAt.toISOString(),
+    messageType: m.messageType ?? "OTHER",
+    filterReason: m.filterReason,
+  }));
 
   if (prospectsWithReplies.length === 0) {
     return (
@@ -39,11 +61,15 @@ export default async function ReponsesPage() {
           </div>
           <SyncNowButton status={syncStatus} />
         </div>
-        <EmptyState
-          icon={Inbox}
-          title="Aucune réponse pour le moment"
-          description="Cliquez sur « Synchroniser maintenant » pour récupérer les réponses réelles de votre boîte Gmail, ou attendez qu'un prospect réponde."
-        />
+        {ignoredList.length > 0 ? (
+          <RepliesInbox conversations={[]} ignored={ignoredList} />
+        ) : (
+          <EmptyState
+            icon={Inbox}
+            title="Aucune réponse pour le moment"
+            description="Cliquez sur « Synchroniser maintenant » pour récupérer les réponses réelles de votre boîte Gmail, ou attendez qu'un prospect réponde."
+          />
+        )}
       </div>
     );
   }
@@ -64,8 +90,13 @@ export default async function ReponsesPage() {
       snippet: m.snippet,
       sentAt: m.sentAt.toISOString(),
       classification: m.classification,
+      messageType: m.messageType,
+      filterReason: m.filterReason,
+      priority: m.priority,
       draftReply: m.draftReply,
       draftStatus: m.draftStatus,
+      draftSource: m.draftSource,
+      draftNeedsInfo: m.draftNeedsInfo,
     })),
   }));
 
@@ -78,7 +109,7 @@ export default async function ReponsesPage() {
         </div>
         <SyncNowButton status={syncStatus} />
       </div>
-      <RepliesInbox conversations={conversations} />
+      <RepliesInbox conversations={conversations} ignored={ignoredList} />
     </div>
   );
 }
