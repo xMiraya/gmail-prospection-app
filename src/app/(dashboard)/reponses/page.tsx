@@ -1,11 +1,16 @@
 import { prisma } from "@/lib/db/prisma";
 import { requireUserId } from "@/lib/auth/session";
 import { RepliesInbox } from "./inbox";
+import { SyncNowButton } from "./sync-now-button";
 import { EmptyState } from "@/components/empty-state";
 import { Inbox } from "lucide-react";
+import { format } from "date-fns";
+import { fr } from "date-fns/locale";
 
 export default async function ReponsesPage() {
   const userId = await requireUserId();
+
+  const account = await prisma.googleAccount.findUnique({ where: { userId } });
 
   const prospectsWithReplies = await prisma.prospect.findMany({
     where: { userId, emailMessages: { some: { direction: "INBOUND" } } },
@@ -17,13 +22,29 @@ export default async function ReponsesPage() {
     orderBy: { updatedAt: "desc" },
   });
 
+  const syncStatus = {
+    connected: !!account?.connected,
+    lastSyncAt: account?.lastSyncAt ? format(account.lastSyncAt, "d MMM yyyy à HH:mm", { locale: fr }) : null,
+    lastSyncNewCount: account?.lastSyncNewCount ?? null,
+    lastSyncError: account?.lastSyncError ?? null,
+  };
+
   if (prospectsWithReplies.length === 0) {
     return (
-      <EmptyState
-        icon={Inbox}
-        title="Aucune réponse pour le moment"
-        description="Dès qu'un prospect répond à l'un de vos emails, la conversation apparaîtra ici."
-      />
+      <div className="space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Réponses</h1>
+            <p className="text-muted-foreground text-sm mt-1">Boîte intelligente : réponses de prospects, classées et prêtes à traiter.</p>
+          </div>
+          <SyncNowButton status={syncStatus} />
+        </div>
+        <EmptyState
+          icon={Inbox}
+          title="Aucune réponse pour le moment"
+          description="Cliquez sur « Synchroniser maintenant » pour récupérer les réponses réelles de votre boîte Gmail, ou attendez qu'un prospect réponde."
+        />
+      </div>
     );
   }
 
@@ -42,14 +63,20 @@ export default async function ReponsesPage() {
       bodyHtml: m.bodyHtml,
       snippet: m.snippet,
       sentAt: m.sentAt.toISOString(),
+      classification: m.classification,
+      draftReply: m.draftReply,
+      draftStatus: m.draftStatus,
     })),
   }));
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Réponses</h1>
-        <p className="text-muted-foreground text-sm mt-1">{conversations.length} conversation(s) avec des prospects.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Réponses</h1>
+          <p className="text-muted-foreground text-sm mt-1">{conversations.length} conversation(s) avec des prospects.</p>
+        </div>
+        <SyncNowButton status={syncStatus} />
       </div>
       <RepliesInbox conversations={conversations} />
     </div>
