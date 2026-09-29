@@ -1,106 +1,149 @@
 import { prisma } from "@/lib/db/prisma";
 import { getGmailClientForUser } from "./client";
+import { classifyReply, generateDraftReply } from "./classify";
 import { createNotification } from "@/lib/notifications";
 import { logActivity } from "@/lib/activity";
 
+function parseFromHeader(from: string) {
+  const match = from.match(/^(.*?)<(.+)>$/);
+  if (match && match[1] !== undefined && match[2] !== undefined) {
+    return { name: match[1].trim().replace(/^"|"$/g, ""), email: match[2].trim().toLowerCase() };
+  }
+  return { name: "", email: from.trim().toLowerCase() };
+}
+
 /**
- * Synchronise les réponses Gmail pour un utilisateur :
- * - récupère les nouveaux messages des threads suivis (ceux liés à un prospect)
- * - détecte les réponses provenant du prospect (et non de nous-mêmes)
- * - marque le prospect "A_REPONDU" et annule ses relances programmées non envoyées
- *
- * Utilise l'historyId Gmail comme curseur pour ne traiter que les nouveautés
- * (idempotent : rejouer la sync ne recrée pas de doublons grâce à gmailMessageId unique).
+ * Synchronise la boîte Gmail réelle : récupère les messages entrants récents (30 jours),
+ * les associe à un prospect existant par email, sinon crée un prospect "À vérifier"
+ * automatiquement (jamais silencieusement fondu dans un prospect existant sans match
+ * exact d'email). Classifie chaque nouvelle réponse et propose un brouillon de réponse —
+ * rien n'est jamais envoyé ici, uniquement lu et stocké.
+ * Idempotent : gmailMessageId est unique, rejouer la sync ne recrée pas de doublons.
  */
-export async function syncGmailReplies(userId: string) {
+export async function syncGmailInbox(userId: string) {
   const gmail = await getGmailClientForUser(userId);
   const account = await prisma.googleAccount.findUniqueOrThrow({ where: { userId } });
 
-  const threads = await prisma.emailThread.findMany({
-    where: { prospect: { userId }, hasReply: false },
-    include: { prospect: true },
-  });
-
   let newReplies = 0;
+  const errors: string[] = [];
 
-  for (const thread of threads) {
-    const { data } = await gmail.users.threads.get({
+  try {
+    const list = await gmail.users.messages.list({
       userId: "me",
-      id: thread.gmailThreadId,
-      format: "metadata",
-      metadataHeaders: ["From", "Subject", "Message-ID", "Date"],
+      q: "in:inbox -from:me newer_than:30d",
+      maxResults: 40,
     });
 
-    const messages = data.messages ?? [];
-    for (const msg of messages) {
-      const existing = await prisma.emailMessage.findUnique({
-        where: { gmailMessageId: msg.id! },
-      });
+    const messageIds = (list.data.messages ?? []).map((m) => m.id!).filter(Boolean);
+
+    for (const id of messageIds) {
+      const existing = await prisma.emailMessage.findUnique({ where: { gmailMessageId: id } });
       if (existing) continue;
 
-      const headers = msg.payload?.headers ?? [];
-      const from = headers.find((h) => h.name === "From")?.value ?? "";
-      const subject = headers.find((h) => h.name === "Subject")?.value ?? "";
-      const isFromProspect = from.toLowerCase().includes(thread.prospect.email.toLowerCase());
-      const isFromUs = from.toLowerCase().includes(account.email.toLowerCase());
-
-      if (!isFromProspect || isFromUs) continue;
-
-      await prisma.emailMessage.create({
-        data: {
-          userId,
-          prospectId: thread.prospectId,
-          direction: "INBOUND",
-          gmailMessageId: msg.id!,
-          gmailThreadId: thread.gmailThreadId,
-          subject,
-          snippet: msg.snippet ?? null,
-          sentAt: new Date(Number(msg.internalDate ?? Date.now())),
-        },
-      });
-
-      newReplies++;
-
-      // Réponse détectée : arrêt immédiat de toute relance programmée non envoyée.
-      const cancelled = await prisma.scheduledEmail.updateMany({
-        where: {
-          prospectId: thread.prospectId,
-          status: { in: ["A_VALIDER", "MODIFIE", "VALIDE", "PROGRAMME"] },
-        },
-        data: { status: "REFUSE", failReason: "Annulé automatiquement : le prospect a répondu" },
-      });
-
-      await prisma.emailThread.update({
-        where: { id: thread.id },
-        data: { hasReply: true, lastMessageAt: new Date() },
-      });
-
-      await prisma.prospect.update({
-        where: { id: thread.prospectId },
-        data: { status: "A_REPONDU", lastContactAt: new Date() },
-      });
-
-      await logActivity(userId, "REPLY_RECEIVED", thread.prospectId);
-      await logActivity(userId, "REPLY_DETECTED", thread.prospectId, { gmailMessageId: msg.id });
-      if (cancelled.count > 0) {
-        await logActivity(userId, "FOLLOWUPS_CANCELLED", thread.prospectId, {
-          count: cancelled.count,
+      try {
+        const { data: msg } = await gmail.users.messages.get({
+          userId: "me",
+          id,
+          format: "metadata",
+          metadataHeaders: ["From", "Subject", "Date"],
         });
-      }
 
-      await createNotification(userId, {
-        type: "REPLY",
-        title: `${thread.prospect.firstName} a répondu`,
-        message: `${thread.prospect.firstName} ${thread.prospect.lastName ?? ""} a répondu à votre email. Ses relances ont été annulées.`,
-        link: `/prospects/${thread.prospectId}`,
-      });
+        const headers = msg.payload?.headers ?? [];
+        const fromRaw = headers.find((h) => h.name === "From")?.value ?? "";
+        const subject = headers.find((h) => h.name === "Subject")?.value ?? "(sans objet)";
+        const { name: fromName, email: fromEmail } = parseFromHeader(fromRaw);
+
+        if (!fromEmail || fromEmail === account.email.toLowerCase()) continue;
+
+        let prospect = await prisma.prospect.findFirst({
+          where: { userId, email: { equals: fromEmail, mode: "insensitive" } },
+        });
+
+        if (!prospect) {
+          const [firstName, ...rest] = (fromName || fromEmail.split("@")[0] || "Contact").split(" ");
+          prospect = await prisma.prospect.create({
+            data: {
+              userId,
+              firstName: firstName || "Contact",
+              lastName: rest.join(" ") || null,
+              email: fromEmail,
+              source: "Réponse Gmail (auto)",
+              status: "A_VERIFIER",
+            },
+          });
+          await logActivity(userId, "PROSPECT_CREATED", prospect.id, { source: "gmail_sync" });
+        }
+
+        const gmailThreadId = msg.threadId!;
+        const thread = await prisma.emailThread.upsert({
+          where: { gmailThreadId },
+          create: { gmailThreadId, prospectId: prospect.id, hasReply: true, lastMessageAt: new Date() },
+          update: { hasReply: true, lastMessageAt: new Date() },
+        });
+
+        const snippet = msg.snippet ?? "";
+        const classification = classifyReply(subject, snippet);
+        const draftReply = generateDraftReply(classification, prospect.firstName);
+
+        await prisma.emailMessage.create({
+          data: {
+            userId,
+            prospectId: prospect.id,
+            direction: "INBOUND",
+            gmailMessageId: id,
+            gmailThreadId,
+            subject,
+            snippet,
+            sentAt: new Date(Number(msg.internalDate ?? Date.now())),
+            classification,
+            draftReply,
+            draftStatus: "PENDING",
+          },
+        });
+
+        newReplies++;
+
+        const cancelled = await prisma.scheduledEmail.updateMany({
+          where: { prospectId: prospect.id, status: { in: ["A_VALIDER", "MODIFIE", "VALIDE", "PROGRAMME"] } },
+          data: { status: "REFUSE", failReason: "Annulé automatiquement : le prospect a répondu" },
+        });
+
+        if (prospect.status !== "A_VERIFIER") {
+          await prisma.prospect.update({ where: { id: prospect.id }, data: { status: "A_REPONDU", lastContactAt: new Date() } });
+        } else {
+          await prisma.prospect.update({ where: { id: prospect.id }, data: { lastContactAt: new Date() } });
+        }
+
+        await logActivity(userId, "REPLY_RECEIVED", prospect.id);
+        await logActivity(userId, "REPLY_DETECTED", prospect.id, { gmailMessageId: id, classification });
+        if (cancelled.count > 0) {
+          await logActivity(userId, "FOLLOWUPS_CANCELLED", prospect.id, { count: cancelled.count });
+        }
+
+        await createNotification(userId, {
+          type: "REPLY",
+          title: `${prospect.firstName} a répondu`,
+          message: `Nouvelle réponse Gmail classée "${classification}". Une proposition de réponse vous attend dans Réponses.`,
+          link: `/reponses`,
+        });
+
+        void thread; // upsert result already applied
+      } catch (err) {
+        errors.push(`Message ${id}: ${err instanceof Error ? err.message : "erreur inconnue"}`);
+      }
     }
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : "Erreur de synchronisation Gmail");
   }
 
   await prisma.googleAccount.update({
     where: { userId },
-    data: { lastSyncAt: new Date() },
+    data: {
+      lastSyncAt: new Date(),
+      lastSyncNewCount: newReplies,
+      lastSyncError: errors.length > 0 ? errors.join(" | ") : null,
+    },
   });
 
-  return { newReplies };
+  return { newReplies, errors };
 }
