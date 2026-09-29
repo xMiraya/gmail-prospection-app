@@ -25,6 +25,7 @@ export async function triggerGmailSync() {
 export async function acceptDraftReply(messageId: string, editedBody: string) {
   const userId = await requireUserId();
   const message = await prisma.emailMessage.findFirstOrThrow({ where: { id: messageId, userId } });
+  if (!message.prospectId) throw new Error("Ce message n'est associé à aucun prospect (email filtré) : impossible de créer une réponse.");
 
   const scheduled = await prisma.scheduledEmail.create({
     data: {
