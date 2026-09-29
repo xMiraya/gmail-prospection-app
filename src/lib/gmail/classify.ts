@@ -1,51 +1,58 @@
 export type ReplyClassification =
   | "INTERESSE"
   | "DEMANDE_INFO"
-  | "RENDEZ_VOUS"
+  | "DEMANDE_PRIX"
+  | "DEMANDE_RDV"
+  | "A_RAPPELER"
   | "PAS_INTERESSE"
-  | "A_RELANCER"
-  | "AUTRE";
+  | "DEJA_EQUIPE"
+  | "REPONSE_AUTOMATIQUE"
+  | "HORS_SUJET"
+  | "A_ANALYSER";
 
 export const CLASSIFICATION_LABELS: Record<ReplyClassification, string> = {
   INTERESSE: "Intéressé",
   DEMANDE_INFO: "Demande d'informations",
-  RENDEZ_VOUS: "Rendez-vous",
+  DEMANDE_PRIX: "Demande de prix",
+  DEMANDE_RDV: "Demande de rendez-vous",
+  A_RAPPELER: "À rappeler",
   PAS_INTERESSE: "Pas intéressé",
-  A_RELANCER: "À relancer",
-  AUTRE: "Autre",
+  DEJA_EQUIPE: "Déjà équipé / prestataire existant",
+  REPONSE_AUTOMATIQUE: "Réponse automatique",
+  HORS_SUJET: "Hors sujet",
+  A_ANALYSER: "À analyser",
 };
 
-// Classification heuristique par mots-clés (français). Volontairement simple et
-// explicable plutôt qu'un appel à un modèle externe : sert uniquement à trier/prioriser
-// l'inbox, jamais à décider d'un envoi automatique.
+// Plus petit = plus prioritaire, utilisé pour trier "À traiter".
+export const CLASSIFICATION_PRIORITY: Record<ReplyClassification, number> = {
+  DEMANDE_RDV: 1,
+  INTERESSE: 2,
+  DEMANDE_PRIX: 3,
+  DEMANDE_INFO: 4,
+  A_RAPPELER: 5,
+  A_ANALYSER: 6,
+  DEJA_EQUIPE: 7,
+  HORS_SUJET: 8,
+  PAS_INTERESSE: 9,
+  REPONSE_AUTOMATIQUE: 10,
+};
+
+// Classification heuristique par mots-clés (français). Volontairement explicable
+// plutôt qu'un modèle externe : détermine la priorité et influence la proposition
+// de réponse, mais ne décide jamais d'un envoi.
 export function classifyReply(subject: string, snippet: string): ReplyClassification {
   const text = `${subject} ${snippet}`.toLowerCase();
 
-  if (/rendez.?vous|\brdv\b|disponib|calendrier|créneau|appel(?:le|er)?/.test(text)) return "RENDEZ_VOUS";
-  if (/pas intéress|ne (?:me |nous )?contact|désabonn|\bstop\b|désinscri|plus jamais/.test(text)) return "PAS_INTERESSE";
-  if (/intéress|ça m'intéresse|partant|envoyez|allons-y|top/.test(text)) return "INTERESSE";
-  if (/informations?|renseignements?|détails?|tarifs?|prix|devis|comment ça marche/.test(text)) return "DEMANDE_INFO";
+  if (/absent(e)? du bureau|out of office|réponse automatique|auto-?reply|je suis actuellement absent|en congé/.test(text))
+    return "REPONSE_AUTOMATIQUE";
+  if (/rendez.?vous|\brdv\b|disponib|calendrier|créneau|appel(?:le|er)?|visio/.test(text)) return "DEMANDE_RDV";
+  if (/tarifs?|\bprix\b|devis|combien (?:ça|ca) coûte|coût|budget/.test(text)) return "DEMANDE_PRIX";
+  if (/déjà (?:un |une )?(?:prestataire|fournisseur|solution|partenaire|agence)|on travaille déjà avec|nous avons déjà/.test(text))
+    return "DEJA_EQUIPE";
+  if (/pas intéress|ne (?:me |nous )?contact|désabonn|\bstop\b|désinscri|plus jamais|non merci/.test(text)) return "PAS_INTERESSE";
+  if (/intéress|ça m'intéresse|partant|envoyez|allons-y|\btop\b|carrément/.test(text)) return "INTERESSE";
+  if (/informations?|renseignements?|détails?|comment ça marche|en (?:savoir|dire) plus|m'en dire plus/.test(text)) return "DEMANDE_INFO";
   if (/plus tard|rappel(?:le|ez)?-moi|pas le temps|occupé|revenez|dans (?:quelques|\d+) (?:semaines|mois|jours)/.test(text))
-    return "A_RELANCER";
-  return "AUTRE";
-}
-
-const TEMPLATES: Record<ReplyClassification, (firstName: string) => string> = {
-  INTERESSE: (firstName) =>
-    `Bonjour ${firstName},<br/><br/>Merci pour votre retour, ravi(e) que cela vous intéresse !<br/>Pour avancer, seriez-vous disponible cette semaine pour un court échange téléphonique ?<br/><br/>Bien à vous.`,
-  DEMANDE_INFO: (firstName) =>
-    `Bonjour ${firstName},<br/><br/>Merci pour votre message. Voici les informations demandées : [à compléter].<br/>N'hésitez pas si vous avez d'autres questions.<br/><br/>Bien à vous.`,
-  RENDEZ_VOUS: (firstName) =>
-    `Bonjour ${firstName},<br/><br/>Avec plaisir. Je vous propose les créneaux suivants : [à compléter].<br/>Dites-moi ce qui vous conviendrait le mieux.<br/><br/>Bien à vous.`,
-  PAS_INTERESSE: (firstName) =>
-    `Bonjour ${firstName},<br/><br/>Bien noté, merci pour votre retour et votre temps.<br/>Je vous souhaite une excellente continuation.<br/><br/>Bien à vous.`,
-  A_RELANCER: (firstName) =>
-    `Bonjour ${firstName},<br/><br/>Bien compris, je reviendrai vers vous plus tard.<br/>N'hésitez pas à me recontacter d'ici là si besoin.<br/><br/>Bien à vous.`,
-  AUTRE: (firstName) =>
-    `Bonjour ${firstName},<br/><br/>Merci pour votre message, je reviens vers vous rapidement.<br/><br/>Bien à vous.`,
-};
-
-/** Génère UNE proposition de réponse à éditer manuellement — jamais envoyée telle quelle. */
-export function generateDraftReply(classification: ReplyClassification, firstName: string) {
-  return TEMPLATES[classification](firstName || "");
+    return "A_RAPPELER";
+  return "A_ANALYSER";
 }
