@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ClassifySelect } from "./classify-select";
+import { DraftReplyPanel } from "./draft-reply-panel";
 import { ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CLASSIFICATION_LABELS, type ReplyClassification } from "@/lib/gmail/classify";
 
 export type Conversation = {
   id: string;
@@ -19,12 +21,31 @@ export type Conversation = {
   company: string | null;
   campaign: string | null;
   status: string;
-  messages: { id: string; direction: string; subject: string; bodyHtml: string | null; snippet: string | null; sentAt: string }[];
+  messages: {
+    id: string;
+    direction: string;
+    subject: string;
+    bodyHtml: string | null;
+    snippet: string | null;
+    sentAt: string;
+    classification: string | null;
+    draftReply: string | null;
+    draftStatus: string | null;
+  }[];
 };
 
 function initials(firstName: string, lastName?: string | null) {
   return `${firstName[0] ?? ""}${lastName?.[0] ?? ""}`.toUpperCase();
 }
+
+const CLASSIFICATION_VARIANT: Record<string, "success" | "warning" | "secondary" | "destructive"> = {
+  INTERESSE: "success",
+  RENDEZ_VOUS: "success",
+  DEMANDE_INFO: "warning",
+  A_RELANCER: "warning",
+  PAS_INTERESSE: "destructive",
+  AUTRE: "secondary",
+};
 
 export function RepliesInbox({ conversations }: { conversations: Conversation[] }) {
   const [selectedId, setSelectedId] = useState(conversations[0]?.id ?? null);
@@ -37,6 +58,7 @@ export function RepliesInbox({ conversations }: { conversations: Conversation[] 
           <div className="divide-y">
             {conversations.map((c) => {
               const last = c.messages[c.messages.length - 1];
+              const lastInbound = [...c.messages].reverse().find((m) => m.direction === "INBOUND");
               return (
                 <button
                   key={c.id}
@@ -58,6 +80,11 @@ export function RepliesInbox({ conversations }: { conversations: Conversation[] 
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{c.company ?? "—"}</p>
                     {last?.snippet && <p className="text-xs text-muted-foreground truncate mt-0.5">{last.snippet}</p>}
+                    {lastInbound?.classification && (
+                      <Badge variant={CLASSIFICATION_VARIANT[lastInbound.classification] ?? "secondary"} className="mt-1.5 text-[10px]">
+                        {CLASSIFICATION_LABELS[lastInbound.classification as ReplyClassification] ?? lastInbound.classification}
+                      </Badge>
+                    )}
                   </div>
                 </button>
               );
@@ -81,18 +108,34 @@ export function RepliesInbox({ conversations }: { conversations: Conversation[] 
             <ScrollArea className="flex-1 p-4">
               <div className="space-y-4">
                 {selected.messages.map((m) => (
-                  <div key={m.id} className={cn("flex", m.direction === "OUTBOUND" ? "justify-end" : "justify-start")}>
-                    <div className={cn("max-w-[80%] rounded-lg border p-3 text-sm", m.direction === "OUTBOUND" ? "bg-brand/5" : "bg-secondary/40")}>
-                      <div className="flex items-center justify-between gap-3 mb-1">
-                        <p className="font-medium text-xs">{m.subject}</p>
-                        <span className="text-[11px] text-muted-foreground shrink-0">{new Date(m.sentAt).toLocaleString("fr-FR")}</span>
+                  <div key={m.id} className="space-y-2">
+                    <div className={cn("flex", m.direction === "OUTBOUND" ? "justify-end" : "justify-start")}>
+                      <div className={cn("max-w-[80%] rounded-lg border p-3 text-sm", m.direction === "OUTBOUND" ? "bg-brand/5" : "bg-secondary/40")}>
+                        <div className="flex items-center justify-between gap-3 mb-1">
+                          <p className="font-medium text-xs">{m.subject}</p>
+                          <span className="text-[11px] text-muted-foreground shrink-0">{new Date(m.sentAt).toLocaleString("fr-FR")}</span>
+                        </div>
+                        {m.bodyHtml ? (
+                          <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: m.bodyHtml }} />
+                        ) : (
+                          <p className="text-muted-foreground">{m.snippet}</p>
+                        )}
+                        {m.classification && (
+                          <Badge variant={CLASSIFICATION_VARIANT[m.classification] ?? "secondary"} className="mt-2 text-[10px]">
+                            {CLASSIFICATION_LABELS[m.classification as ReplyClassification] ?? m.classification}
+                          </Badge>
+                        )}
                       </div>
-                      {m.bodyHtml ? (
-                        <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: m.bodyHtml }} />
-                      ) : (
-                        <p className="text-muted-foreground">{m.snippet}</p>
-                      )}
                     </div>
+                    {m.direction === "INBOUND" && m.draftStatus === "PENDING" && m.draftReply && (
+                      <DraftReplyPanel messageId={m.id} draftReply={m.draftReply} />
+                    )}
+                    {m.direction === "INBOUND" && m.draftStatus === "ACCEPTED" && (
+                      <p className="text-[11px] text-success ml-1">Réponse acceptée — en attente de validation finale dans « À valider ».</p>
+                    )}
+                    {m.direction === "INBOUND" && m.draftStatus === "DISMISSED" && (
+                      <p className="text-[11px] text-muted-foreground ml-1">Proposition rejetée.</p>
+                    )}
                   </div>
                 ))}
               </div>
