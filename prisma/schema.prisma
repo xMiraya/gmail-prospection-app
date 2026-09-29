@@ -49,6 +49,8 @@ model GoogleAccount {
   scope         String    @db.Text
   historyId     String?   // Gmail History API cursor, used to detect new replies incrementally
   lastSyncAt    DateTime?
+  lastSyncNewCount Int?
+  lastSyncError String?   @db.Text
   connected     Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -363,6 +365,12 @@ model EmailMessage {
   subject       String
   snippet       String?  @db.Text
   bodyHtml      String?  @db.Text
+
+  // Réponses entrantes uniquement : classification heuristique + brouillon de réponse
+  // proposé, jamais envoyé sans validation humaine explicite (voir /reponses).
+  classification String?
+  draftReply     String?  @db.Text
+  draftStatus    String?  // PENDING | ACCEPTED | DISMISSED
 
   sentAt        DateTime
 
