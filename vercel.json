@@ -1,5 +1,4 @@
 {
-  "$comment": "Le plan Vercel Hobby limite les Cron Jobs à 2 au maximum et 1 exécution par jour. Ces 2 entrées ne servent que de filet de sécurité quotidien. En attendant un plan Pro, utilisez un service externe gratuit (cron-job.org) pour appeler les 3 routes /api/cron/* toutes les quelques minutes avec l'en-tête Authorization: Bearer <CRON_SECRET> — voir le README.",
   "crons": [
     { "path": "/api/cron/sync-gmail", "schedule": "0 8 * * *" },
     { "path": "/api/cron/send-emails", "schedule": "0 9 * * *" }
