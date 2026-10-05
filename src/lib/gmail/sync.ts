@@ -3,6 +3,7 @@ import { getGmailClientForUser } from "./client";
 import { classifyMessageType, VISIBLE_MESSAGE_TYPES, MESSAGE_TYPE_BASE_SCORE } from "./message-filter";
 import { classifyReply, CLASSIFICATION_PRIORITY, computeImportanceScore } from "./classify";
 import { generateDraftReply } from "./draft";
+import { reclassifyExistingMessages } from "./reclassify";
 import { createNotification } from "@/lib/notifications";
 import { logActivity } from "@/lib/activity";
 
@@ -26,6 +27,12 @@ function parseFromHeader(from: string) {
 export async function syncGmailInbox(userId: string) {
   const gmail = await getGmailClientForUser(userId);
   const account = await prisma.googleAccount.findUniqueOrThrow({ where: { userId } });
+
+  // Reclassifie au passage les messages importés avant l'ajout du filtre anti-pub
+  // (messageType encore null) : les anciennes pubs Fnac/Temu disparaissent de l'UI
+  // sans qu'aucune action manuelle ne soit requise. Idempotent et peu coûteux (ne
+  // touche que les lignes encore non classées), donc sûr à ré-exécuter à chaque sync.
+  await reclassifyExistingMessages(prisma);
 
   let newReplies = 0;
   const errors: string[] = [];
