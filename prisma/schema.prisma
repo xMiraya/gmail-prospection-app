@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL1")
 }
 
 // ============================================================
@@ -49,6 +49,8 @@ model GoogleAccount {
   scope         String    @db.Text
   historyId     String?   // Gmail History API cursor, used to detect new replies incrementally
   lastSyncAt    DateTime?
+  lastSyncNewCount Int?
+  lastSyncError String?   @db.Text
   connected     Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -344,8 +346,10 @@ model EmailMessage {
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  prospectId    String
-  prospect      Prospect @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  // Optionnel : un message filtré (newsletter, promo, notification...) n'est jamais
+  // rattaché à un prospect — aucun faux prospect n'est créé pour de la publicité.
+  prospectId    String?
+  prospect      Prospect? @relation(fields: [prospectId], references: [id], onDelete: Cascade)
 
   campaignId    String?
   campaign      Campaign? @relation(fields: [campaignId], references: [id])
@@ -360,13 +364,33 @@ model EmailMessage {
   gmailMessageId String  @unique
   gmailThreadId  String
 
+  fromEmail     String?
+  fromName      String?
+
   subject       String
   snippet       String?  @db.Text
   bodyHtml      String?  @db.Text
 
-  sentAt        DateTime
+  // Filtre de premier niveau (avant tout affichage) : catégorie du message et raison,
+  // voir src/lib/gmail/message-filter.ts. Seules certaines catégories sont visibles
+  // dans /reponses ; les autres restent en base pour l'onglet "Ignorés" mais ne
+  // touchent jamais Gmail lui-même.
+  messageType    String?
+  filterReason   String?  @db.Text
+  // Score 0-100 reflétant l'urgence/intérêt commercial (RDV ~95, pub ~5...), voir
+  // computeImportanceScore() dans message-filter.ts / classify.ts.
+  importanceScore Int     @default(50)
 
-  thread        EmailThread? @relation(fields: [gmailThreadId], references: [gmailThreadId])
+  // Réponses entrantes visibles uniquement : classification commerciale + brouillon de
+  // réponse proposé, jamais envoyé sans validation humaine explicite (voir /reponses).
+  classification String?
+  priority       Int      @default(99)
+  draftReply     String?  @db.Text
+  draftStatus    String?  // PENDING | ACCEPTED | DISMISSED
+  draftSource    String?  // "ai" | "rules"
+  draftNeedsInfo Boolean  @default(false)
+
+  sentAt        DateTime
 
   createdAt     DateTime @default(now())
 }
@@ -381,8 +405,6 @@ model EmailThread {
 
   hasReply      Boolean  @default(false)
   lastMessageAt DateTime?
-
-  messages      EmailMessage[]
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

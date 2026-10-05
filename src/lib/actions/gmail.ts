@@ -3,8 +3,64 @@
 import { prisma } from "@/lib/db/prisma";
 import { requireUserId } from "@/lib/auth/session";
 import { sendGmailMessage, getGmailClientForUser } from "@/lib/gmail/client";
+import { syncGmailInbox } from "@/lib/gmail/sync";
 import { renderTemplate } from "@/lib/templates/render";
 import { revalidatePath } from "next/cache";
+
+/** Déclenché par le bouton "Synchroniser maintenant" (Réponses / Paramètres Gmail). */
+export async function triggerGmailSync() {
+  const userId = await requireUserId();
+  const result = await syncGmailInbox(userId);
+  revalidatePath("/reponses");
+  revalidatePath("/a-traiter");
+  revalidatePath("/parametres/gmail");
+  return result;
+}
+
+/**
+ * Accepte (avec édition possible) la proposition de réponse à un message entrant :
+ * crée un brouillon dans la file de validation ("À valider") — ne l'envoie JAMAIS
+ * directement. L'envoi réel passe toujours par validateAndSendNow/validateAndSchedule.
+ */
+export async function acceptDraftReply(messageId: string, editedBody: string) {
+  const userId = await requireUserId();
+  const message = await prisma.emailMessage.findFirstOrThrow({ where: { id: messageId, userId } });
+  if (!message.prospectId) throw new Error("Ce message n'est associé à aucun prospect (email filtré) : impossible de créer une réponse.");
+
+  const scheduled = await prisma.scheduledEmail.create({
+    data: {
+      userId,
+      prospectId: message.prospectId,
+      status: "A_VALIDER",
+      toEmail: (await prisma.prospect.findUniqueOrThrow({ where: { id: message.prospectId } })).email,
+      subject: message.subject.startsWith("Re:") ? message.subject : `Re: ${message.subject}`,
+      bodyHtml: editedBody,
+      scheduledFor: new Date(),
+      threadId: message.gmailThreadId,
+      gmailMessageId: message.gmailMessageId,
+    },
+  });
+
+  await prisma.emailMessage.update({ where: { id: messageId }, data: { draftStatus: "ACCEPTED" } });
+  revalidatePath("/reponses");
+  revalidatePath("/a-traiter");
+  revalidatePath("/a-valider");
+  return scheduled.id;
+}
+
+/** Rejette la proposition de réponse : retire le message de "À traiter" sans rien envoyer. */
+export async function dismissDraftReply(messageId: string) {
+  const userId = await requireUserId();
+  await prisma.emailMessage.updateMany({ where: { id: messageId, userId }, data: { draftStatus: "DISMISSED" } });
+  revalidatePath("/reponses");
+  revalidatePath("/a-traiter");
+}
+
+/** Permet de modifier le texte du brouillon proposé sans encore l'accepter. */
+export async function updateDraftReply(messageId: string, body: string) {
+  const userId = await requireUserId();
+  await prisma.emailMessage.updateMany({ where: { id: messageId, userId }, data: { draftReply: body } });
+}
 
 export async function disconnectGmail() {
   const userId = await requireUserId();

@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { TestGmailButton } from "./test-button";
+import { SyncNowButton } from "../../reponses/sync-now-button";
 import { Mails, CheckCircle2, AlertTriangle } from "lucide-react";
 
 export default async function GmailSettingsPage({
@@ -62,9 +63,25 @@ export default async function GmailSettingsPage({
                   <p className="text-muted-foreground text-xs">Dernière synchronisation</p>
                   <p>{account.lastSyncAt ? format(account.lastSyncAt, "d MMMM yyyy à HH:mm", { locale: fr }) : "Jamais"}</p>
                 </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Nouveaux messages (dernier sync)</p>
+                  <p>{account.lastSyncNewCount ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Erreurs</p>
+                  <p className={account.lastSyncError ? "text-destructive" : ""}>{account.lastSyncError ?? "Aucune"}</p>
+                </div>
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="flex flex-wrap gap-2 pt-2 items-center">
                 <TestGmailButton />
+                <SyncNowButton
+                  status={{
+                    connected: account.connected,
+                    lastSyncAt: account.lastSyncAt ? format(account.lastSyncAt, "d MMM yyyy à HH:mm", { locale: fr }) : null,
+                    lastSyncNewCount: account.lastSyncNewCount,
+                    lastSyncError: account.lastSyncError,
+                  }}
+                />
                 <Button asChild variant="outline" size="sm">
                   <a href="/api/gmail/connect">Reconnecter</a>
                 </Button>
