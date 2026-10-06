@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "start": "node scripts/migrate-iridflow.mjs && tsx prisma/seed.ts && next start",
+    "start": "node scripts/migrate-iridflow.mjs && (tsx prisma/seed.ts || true) && next start -H 0.0.0.0",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "prisma:migrate": "prisma migrate dev",
