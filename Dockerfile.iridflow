@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+
+# ---- deps: install node_modules with full devDependencies for the build ----
+FROM node:20-bookworm-slim AS deps
+WORKDIR /app
+RUN apt-get update -qq \
+  && apt-get install -y -qq --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+# ---- builder: generate the Prisma client (glibc engine) and build Next.js ----
+FROM node:20-bookworm-slim AS builder
+WORKDIR /app
+RUN apt-get update -qq \
+  && apt-get install -y -qq --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV DATABASE_URL1="postgresql://build:build@localhost:5432/build"
+RUN npx prisma generate
+RUN npm run build
+
+# ---- runner: minimal runtime image, Debian slim (glibc) throughout ----
+FROM node:20-bookworm-slim AS runner
+WORKDIR /app
+RUN apt-get update -qq \
+  && apt-get install -y -qq --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && groupadd --system --gid 1001 nodejs \
+  && useradd --system --uid 1001 --gid nodejs nextjs
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.js ./next.config.js
+
+USER nextjs
+
+EXPOSE 3000
+
+# Migrations run first but never block the HTTP server from coming up: if the
+# migration step fails for any reason, `;` (not `&&`) still lets next start.
+# Seed is intentionally never part of this chain (run it manually if needed).
+CMD node scripts/migrate-iridflow.mjs; npx next start -H 0.0.0.0 -p ${PORT:-3000}
