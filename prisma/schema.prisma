@@ -338,6 +338,12 @@ model ScheduledEmail {
   @@index([status, scheduledFor])
 }
 
+enum InboundCategory {
+  REAL_REPLY     // vrai message d'un prospect, nécessite une réponse
+  AUTO_REPLY     // réponse automatique (absence du bureau, accusé de réception...)
+  AD_NEWSLETTER  // pub, newsletter, notification liée à un abonnement : à ignorer
+}
+
 // Trace définitive d'un email réellement envoyé (ou reçu) via Gmail.
 model EmailMessage {
   id            String   @id @default(cuid())
@@ -363,6 +369,11 @@ model EmailMessage {
   subject       String
   snippet       String?  @db.Text
   bodyHtml      String?  @db.Text
+
+  // Classification des messages INBOUND uniquement (null pour OUTBOUND) :
+  // distingue une vraie réponse d'un prospect d'une pub/newsletter ou d'une
+  // réponse automatique, pour ne jamais relancer/notifier sur ces dernières.
+  category      InboundCategory?
 
   sentAt        DateTime
 
