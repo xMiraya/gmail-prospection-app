@@ -1,0 +1,46 @@
+name: Iridflow cron (sync Gmail / send emails / prepare follow-ups)
+
+# Iridflow n'offre pas de cron générique pour appeler une URL à intervalles
+# réguliers (contrairement aux "crons" de vercel.json, qui ne s'appliquent
+# qu'à un déploiement Vercel). Ce workflow remplace ce rôle depuis GitHub,
+# indépendamment de l'hébergement choisi pour l'app.
+on:
+  schedule:
+    - cron: "*/5 * * * *" # sync Gmail + envoi des emails validés, toutes les 5 min
+    - cron: "7 * * * *" # préparation des relances dues, une fois par heure
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions
+
+jobs:
+  sync-and-send:
+    if: github.event.schedule == '*/5 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync Gmail replies
+        run: |
+          curl -sS -X GET "${APP_URL}/api/cron/sync-gmail" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            --fail-with-body
+        env:
+          APP_URL: ${{ secrets.IRIDFLOW_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      - name: Send due validated emails
+        run: |
+          curl -sS -X GET "${APP_URL}/api/cron/send-emails" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            --fail-with-body
+        env:
+          APP_URL: ${{ secrets.IRIDFLOW_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+  prepare-followups:
+    if: github.event.schedule == '7 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare due follow-ups
+        run: |
+          curl -sS -X GET "${APP_URL}/api/cron/prepare-followups" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            --fail-with-body
+        env:
+          APP_URL: ${{ secrets.IRIDFLOW_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
