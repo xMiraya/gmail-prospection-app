@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { requireUserId } from "@/lib/auth/session";
+import { VISIBLE_MESSAGE_TYPES } from "@/lib/gmail/message-filter";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -106,13 +107,13 @@ export default async function DashboardPage() {
     prisma.scheduledEmail.count({
       where: { userId, status: { in: ["VALIDE", "PROGRAMME"] }, scheduledFor: { gte: startOfToday } },
     }),
-    prisma.emailMessage.count({ where: { userId, direction: "INBOUND" } }),
+    prisma.emailMessage.count({ where: { userId, direction: "INBOUND", messageType: { in: VISIBLE_MESSAGE_TYPES } } }),
     prisma.prospect.count({ where: { userId, status: { in: ["INTERESSE", "RENDEZ_VOUS", "CLIENT"] } } }),
     prisma.prospect.count({ where: { userId, status: "RENDEZ_VOUS" } }),
     prisma.campaign.count({ where: { userId, status: "ACTIVE" } }),
     prisma.activity.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 8, include: { prospect: true } }),
     prisma.emailMessage.findMany({
-      where: { userId, direction: "INBOUND" },
+      where: { userId, direction: "INBOUND", messageType: { in: VISIBLE_MESSAGE_TYPES }, prospectId: { not: null } },
       orderBy: { sentAt: "desc" },
       take: 4,
       include: { prospect: true },
@@ -284,7 +285,7 @@ export default async function DashboardPage() {
                 </p>
               </div>
             )}
-            {recentReplies.map((r) => (
+            {recentReplies.filter((r) => r.prospect).map((r) => (
               <Link
                 key={r.id}
                 href={`/prospects/${r.prospectId}`}
@@ -292,11 +293,11 @@ export default async function DashboardPage() {
               >
                 <Avatar className="h-7 w-7">
                   <AvatarFallback className="bg-brand/10 text-brand text-[10px]">
-                    {initials(`${r.prospect.firstName} ${r.prospect.lastName ?? ""}`)}
+                    {initials(`${r.prospect!.firstName} ${r.prospect!.lastName ?? ""}`)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{r.prospect.firstName} {r.prospect.lastName}</p>
+                  <p className="text-sm font-medium truncate">{r.prospect!.firstName} {r.prospect!.lastName}</p>
                   <p className="text-xs text-muted-foreground truncate">{r.snippet}</p>
                 </div>
                 <span className="text-xs text-muted-foreground shrink-0">{timeAgo(r.sentAt)}</span>

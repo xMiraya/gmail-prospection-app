@@ -1,125 +1,78 @@
-/**
- * Classification heuristique des emails entrants : distingue une vraie réponse
- * d'un prospect d'une pub/newsletter ou d'une réponse automatique, sans appel
- * IA (rapide, gratuit, et suffisant pour la majorité des cas évidents). Les cas
- * ambigus tombent par défaut sur REAL_REPLY : mieux vaut proposer une réponse
- * de trop que d'ignorer silencieusement un vrai prospect.
- */
+export type ReplyClassification =
+  | "INTERESSE"
+  | "DEMANDE_INFO"
+  | "DEMANDE_PRIX"
+  | "DEMANDE_RDV"
+  | "A_RAPPELER"
+  | "PAS_INTERESSE"
+  | "DEJA_EQUIPE"
+  | "REPONSE_AUTOMATIQUE"
+  | "HORS_SUJET"
+  | "A_ANALYSER";
 
-export type InboundCategory = "REAL_REPLY" | "AUTO_REPLY" | "AD_NEWSLETTER";
+export const CLASSIFICATION_LABELS: Record<ReplyClassification, string> = {
+  INTERESSE: "Intéressé",
+  DEMANDE_INFO: "Demande d'informations",
+  DEMANDE_PRIX: "Demande de prix",
+  DEMANDE_RDV: "Demande de rendez-vous",
+  A_RAPPELER: "À rappeler",
+  PAS_INTERESSE: "Pas intéressé",
+  DEJA_EQUIPE: "Déjà équipé / prestataire existant",
+  REPONSE_AUTOMATIQUE: "Réponse automatique",
+  HORS_SUJET: "Hors sujet",
+  A_ANALYSER: "À analyser",
+};
 
-export interface ClassificationInput {
-  fromHeader: string;
-  subject: string;
-  listUnsubscribe?: string;
-  precedence?: string;
-  autoSubmitted?: string;
-  bodyText?: string;
+// Plus petit = plus prioritaire, utilisé pour trier "À traiter".
+export const CLASSIFICATION_PRIORITY: Record<ReplyClassification, number> = {
+  DEMANDE_RDV: 1,
+  INTERESSE: 2,
+  DEMANDE_PRIX: 3,
+  DEMANDE_INFO: 4,
+  A_RAPPELER: 5,
+  A_ANALYSER: 6,
+  DEJA_EQUIPE: 7,
+  HORS_SUJET: 8,
+  PAS_INTERESSE: 9,
+  REPONSE_AUTOMATIQUE: 10,
+};
+
+// Score d'importance 0-100 pour une réponse déjà classée (type de message visible).
+// Combine avec MESSAGE_TYPE_BASE_SCORE (newsletters/pubs restent proches de 0).
+export const CLASSIFICATION_SCORE: Record<ReplyClassification, number> = {
+  DEMANDE_RDV: 95,
+  INTERESSE: 90,
+  DEMANDE_PRIX: 85,
+  DEMANDE_INFO: 80,
+  A_RAPPELER: 60,
+  A_ANALYSER: 50,
+  DEJA_EQUIPE: 30,
+  HORS_SUJET: 20,
+  PAS_INTERESSE: 15,
+  REPONSE_AUTOMATIQUE: 5,
+};
+
+/** Score final affiché à l'utilisateur, calculé après filtrage + classification. */
+export function computeImportanceScore(classification: ReplyClassification, baseTypeScore: number): number {
+  return Math.round(Math.max(baseTypeScore, CLASSIFICATION_SCORE[classification]));
 }
 
-const AUTO_REPLY_SUBJECT_PATTERNS = [
-  /r[ée]ponse automatique/i,
-  /automatic reply/i,
-  /out of office/i,
-  /absence du bureau/i,
-  /je suis (actuellement )?absent/i,
-  /accus[ée] de r[ée]ception/i,
-  /undeliverable|delivery (status notification|failure)/i,
-];
+// Classification heuristique par mots-clés (français). Volontairement explicable
+// plutôt qu'un modèle externe : détermine la priorité et influence la proposition
+// de réponse, mais ne décide jamais d'un envoi.
+export function classifyReply(subject: string, snippet: string): ReplyClassification {
+  const text = `${subject} ${snippet}`.toLowerCase();
 
-const AD_SENDER_PATTERNS = [
-  /no-?reply@/i,
-  /ne-?pas-?repondre@/i,
-  /notifications?@/i,
-  /newsletter@/i,
-  /marketing@/i,
-  /contact@.*\.(com|fr)$/i,
-];
-
-const AD_SUBJECT_PATTERNS = [
-  /newsletter/i,
-  /d[ée]sabonn/i,
-  /unsubscribe/i,
-  /promo(tion)?s?\b/i,
-  /offre (sp[ée]ciale|exclusive|limit[ée]e)/i,
-  /soldes/i,
-  /\d{1,3}\s?%\s?de r[ée]duction/i,
-  /votre facture/i,
-  /confirmation d'abonnement/i,
-  /votre abonnement/i,
-];
-
-export function classifyInboundEmail(input: ClassificationInput): InboundCategory {
-  const from = input.fromHeader ?? "";
-  const subject = input.subject ?? "";
-
-  if (input.autoSubmitted && input.autoSubmitted.toLowerCase() !== "no") {
-    return "AUTO_REPLY";
-  }
-  if (AUTO_REPLY_SUBJECT_PATTERNS.some((re) => re.test(subject))) {
-    return "AUTO_REPLY";
-  }
-
-  // List-Unsubscribe est le signal le plus fiable qu'il s'agit d'un envoi en
-  // masse (newsletter, notification de service) et non d'une personne réelle.
-  if (input.listUnsubscribe) {
-    return "AD_NEWSLETTER";
-  }
-  if (input.precedence && /bulk|list|junk/i.test(input.precedence)) {
-    return "AD_NEWSLETTER";
-  }
-  if (AD_SENDER_PATTERNS.some((re) => re.test(from))) {
-    return "AD_NEWSLETTER";
-  }
-  if (AD_SUBJECT_PATTERNS.some((re) => re.test(subject))) {
-    return "AD_NEWSLETTER";
-  }
-
-  return "REAL_REPLY";
-}
-
-function base64UrlDecode(data: string): string {
-  return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
-}
-
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-interface GmailPart {
-  mimeType?: string | null;
-  body?: { data?: string | null } | null;
-  parts?: GmailPart[] | null;
-}
-
-/** Extrait le texte brut d'un message Gmail (format "full"), en préférant text/plain. */
-export function extractPlainTextBody(payload?: GmailPart | null, depth = 0): string {
-  if (!payload || depth > 5) return "";
-
-  if (payload.mimeType === "text/plain" && payload.body?.data) {
-    return base64UrlDecode(payload.body.data);
-  }
-  if (payload.mimeType === "text/html" && payload.body?.data) {
-    return stripHtml(base64UrlDecode(payload.body.data));
-  }
-
-  const parts = payload.parts ?? [];
-  const plainPart = parts.find((p) => p.mimeType === "text/plain" && p.body?.data);
-  if (plainPart?.body?.data) return base64UrlDecode(plainPart.body.data);
-
-  const htmlPart = parts.find((p) => p.mimeType === "text/html" && p.body?.data);
-  if (htmlPart?.body?.data) return stripHtml(base64UrlDecode(htmlPart.body.data));
-
-  for (const part of parts) {
-    const nested = extractPlainTextBody(part, depth + 1);
-    if (nested) return nested;
-  }
-
-  return "";
+  if (/absent(e)? du bureau|out of office|réponse automatique|auto-?reply|je suis actuellement absent|en congé/.test(text))
+    return "REPONSE_AUTOMATIQUE";
+  if (/rendez.?vous|\brdv\b|disponib|calendrier|créneau|appel(?:le|er)?|visio/.test(text)) return "DEMANDE_RDV";
+  if (/tarifs?|\bprix\b|devis|combien (?:ça|ca) coûte|coût|budget/.test(text)) return "DEMANDE_PRIX";
+  if (/déjà (?:un |une )?(?:prestataire|fournisseur|solution|partenaire|agence)|on travaille déjà avec|nous avons déjà/.test(text))
+    return "DEJA_EQUIPE";
+  if (/pas intéress|ne (?:me |nous )?contact|désabonn|\bstop\b|désinscri|plus jamais|non merci/.test(text)) return "PAS_INTERESSE";
+  if (/intéress|ça m'intéresse|partant|envoyez|allons-y|\btop\b|carrément/.test(text)) return "INTERESSE";
+  if (/informations?|renseignements?|détails?|comment ça marche|en (?:savoir|dire) plus|m'en dire plus/.test(text)) return "DEMANDE_INFO";
+  if (/plus tard|rappel(?:le|ez)?-moi|pas le temps|occupé|revenez|dans (?:quelques|\d+) (?:semaines|mois|jours)/.test(text))
+    return "A_RAPPELER";
+  return "A_ANALYSER";
 }

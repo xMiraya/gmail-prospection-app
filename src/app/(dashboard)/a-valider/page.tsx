@@ -31,6 +31,7 @@ export default async function AValiderPage() {
   });
   const historyByProspect = new Map<string, typeof history>();
   for (const h of history) {
+    if (!h.prospectId) continue;
     const list = historyByProspect.get(h.prospectId) ?? [];
     list.push(h);
     historyByProspect.set(h.prospectId, list);

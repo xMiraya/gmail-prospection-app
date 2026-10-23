@@ -24,7 +24,7 @@ const { prisma } = await import("@/lib/db/prisma");
 const { launchCampaign, prepareDueFollowUps } = await import("@/lib/campaigns/prepare");
 const { saveEditedEmail, validateAndSendNow, validateAndSchedule } = await import("@/lib/validation/core");
 const { processDueEmails } = await import("@/lib/queue/sender");
-const { syncGmailReplies } = await import("@/lib/gmail/sync");
+const { syncGmailInbox } = await import("@/lib/gmail/sync");
 
 const TEST_EMAIL = "workflow-test-user@example.com";
 
@@ -194,7 +194,7 @@ describe("Workflow complet de prospection (intégration)", () => {
       },
     }));
 
-    const syncResult = await syncGmailReplies(user.id);
+    const syncResult = await syncGmailInbox(user.id);
     expect(syncResult.newReplies).toBe(1);
 
     // 15. Le prospect passe en A_REPONDU

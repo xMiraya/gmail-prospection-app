@@ -1,7 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../src/lib/db/prisma";
 import { seedDemoData } from "../src/lib/db/seed-demo";
-
-const prisma = new PrismaClient();
 
 seedDemoData(prisma)
   .then(({ email, password, created }) => {

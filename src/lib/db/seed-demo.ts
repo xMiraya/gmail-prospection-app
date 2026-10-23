@@ -1,25 +1,29 @@
-import type { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-/**
- * Crée (ou retrouve, de façon idempotente) le compte et les données de démo.
- * Toutes marquées source="Démo" pour rester clairement identifiables et
- * séparables des vraies données de prospection.
- */
+// Données de démonstration : toutes marquées source="Démo" pour rester
+// clairement identifiables et séparables des vraies données de prospection.
+// Idempotent : si le compte de démo a déjà une campagne, ne recrée rien.
 export async function seedDemoData(prisma: PrismaClient) {
   const email = process.env.SEED_USER_EMAIL ?? "demo@example.com";
   const password = process.env.SEED_USER_PASSWORD ?? "demopassword123";
 
-  const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    return { email, password, created: false };
-  }
-
-  const user = await prisma.user.create({
-    data: { email, name: "Compte de démo", passwordHash: await bcrypt.hash(password, 12) },
+  const user = await prisma.user.upsert({
+    where: { email },
+    create: { email, name: "Compte de démo", passwordHash: await bcrypt.hash(password, 12) },
+    update: {},
   });
 
-  await prisma.prospectionSettings.create({ data: { userId: user.id } });
+  await prisma.prospectionSettings.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id },
+    update: {},
+  });
+
+  const alreadySeeded = await prisma.campaign.findFirst({ where: { userId: user.id } });
+  if (alreadySeeded) {
+    return { email, password, created: false };
+  }
 
   const template = await prisma.emailTemplate.create({
     data: {

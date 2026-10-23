@@ -6,13 +6,19 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState } from "@/components/empty-state";
 import { Mail } from "lucide-react";
+import { VISIBLE_MESSAGE_TYPES } from "@/lib/gmail/message-filter";
 
 export default async function EmailsPage({ searchParams }: { searchParams: { filter?: string } }) {
   const userId = await requireUserId();
   const filter = searchParams.filter ?? "tous";
 
   const [sentAndReceived, drafts, failed] = await Promise.all([
-    prisma.emailMessage.findMany({ where: { userId }, include: { prospect: true, campaign: true }, orderBy: { sentAt: "desc" }, take: 200 }),
+    prisma.emailMessage.findMany({
+      where: { userId, OR: [{ direction: "OUTBOUND" }, { direction: "INBOUND", messageType: { in: VISIBLE_MESSAGE_TYPES } }] },
+      include: { prospect: true, campaign: true },
+      orderBy: { sentAt: "desc" },
+      take: 200,
+    }),
     prisma.scheduledEmail.findMany({ where: { userId, status: { in: ["A_VALIDER", "MODIFIE", "VALIDE", "PROGRAMME"] } }, include: { prospect: true, campaign: true }, orderBy: { scheduledFor: "desc" }, take: 200 }),
     prisma.scheduledEmail.findMany({ where: { userId, status: "ECHEC" }, include: { prospect: true, campaign: true }, orderBy: { updatedAt: "desc" }, take: 200 }),
   ]);
@@ -20,13 +26,15 @@ export default async function EmailsPage({ searchParams }: { searchParams: { fil
   type Row = { id: string; prospectName: string; prospectId: string; subject: string; campaign: string; date: Date; status: string; variant: "brand" | "secondary" | "success" | "destructive" | "warning" };
 
   const rows: Row[] = [
-    ...sentAndReceived.map((m) => ({
-      id: m.id, prospectId: m.prospectId,
-      prospectName: `${m.prospect.firstName} ${m.prospect.lastName ?? ""}`,
-      subject: m.subject, campaign: m.campaign?.name ?? "—", date: m.sentAt,
-      status: m.direction === "OUTBOUND" ? "Envoyé" : "Réponse",
-      variant: (m.direction === "OUTBOUND" ? "brand" : "success") as Row["variant"],
-    })),
+    ...sentAndReceived
+      .filter((m) => m.prospect)
+      .map((m) => ({
+        id: m.id, prospectId: m.prospectId!,
+        prospectName: `${m.prospect!.firstName} ${m.prospect!.lastName ?? ""}`,
+        subject: m.subject, campaign: m.campaign?.name ?? "—", date: m.sentAt,
+        status: m.direction === "OUTBOUND" ? "Envoyé" : "Réponse",
+        variant: (m.direction === "OUTBOUND" ? "brand" : "success") as Row["variant"],
+      })),
     ...drafts.map((d) => ({
       id: d.id, prospectId: d.prospectId,
       prospectName: `${d.prospect.firstName} ${d.prospect.lastName ?? ""}`,
