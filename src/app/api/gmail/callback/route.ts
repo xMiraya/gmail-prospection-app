@@ -4,17 +4,19 @@ import { authOptions } from "@/lib/auth/auth";
 import { getOAuthClient, fetchConnectedEmail } from "@/lib/gmail/client";
 import { prisma } from "@/lib/db/prisma";
 
+const publicBaseUrl = process.env.NEXTAUTH_URL;
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return NextResponse.redirect(new URL("/login", publicBaseUrl));
   }
 
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
 
   if (!code || state !== session.user.id) {
-    return NextResponse.redirect(new URL("/parametres/gmail?error=oauth_invalid", req.url));
+    return NextResponse.redirect(new URL("/parametres/gmail?error=oauth_invalid", publicBaseUrl));
   }
 
   try {
@@ -28,7 +30,7 @@ export async function GET(req: NextRequest) {
       const existing = await prisma.googleAccount.findUnique({ where: { userId: session.user.id } });
       if (!existing) {
         return NextResponse.redirect(
-          new URL("/parametres/gmail?error=no_refresh_token", req.url)
+          new URL("/parametres/gmail?error=no_refresh_token", publicBaseUrl)
         );
       }
     }
@@ -56,9 +58,9 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.redirect(new URL("/parametres/gmail?connected=1", req.url));
+    return NextResponse.redirect(new URL("/parametres/gmail?connected=1", publicBaseUrl));
   } catch (err) {
     console.error("Erreur OAuth Gmail", err);
-    return NextResponse.redirect(new URL("/parametres/gmail?error=oauth_failed", req.url));
+    return NextResponse.redirect(new URL("/parametres/gmail?error=oauth_failed", publicBaseUrl));
   }
 }
