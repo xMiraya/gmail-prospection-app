@@ -1,0 +1,51 @@
+name: Build and push Docker image for Iridflow
+
+# Iridflow's own build step runs docker compose build on the target host and
+# times out at 10 minutes. On this app's current size that limit is too tight
+# (builds there consistently hit ~600s regardless of Dockerfile tweaks). GitHub
+# Actions runners build the same image much faster and push it to GHCR; Iridflow
+# then only has to `docker pull` + `up`, which takes seconds instead of minutes.
+on:
+  push:
+    branches:
+      - claude/email-prospection-app-s5okvi
+      - main
+    paths:
+      - "Dockerfile.iridflow"
+      - "package.json"
+      - "package-lock.json"
+      - "prisma/**"
+      - "src/**"
+      - "next.config.js"
+      - ".github/workflows/build-image.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.iridflow
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
